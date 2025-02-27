@@ -43,7 +43,7 @@ require (
 	github.com/coreos/stream-metadata-go v0.1.8
 	github.com/daixiang0/gci v0.13.4
 	github.com/digitalocean/go-libvirt v0.0.0-20240220204746-fcabe97a6eed
-	github.com/diskfs/go-diskfs v1.4.0
+	github.com/diskfs/go-diskfs v1.4.1
 	github.com/form3tech-oss/jwt-go v3.2.3+incompatible
 	github.com/go-logr/logr v1.4.2
 	github.com/go-openapi/errors v0.22.0
@@ -96,7 +96,7 @@ require (
 	github.com/prometheus/common v0.55.0
 	github.com/rogpeppe/go-internal v1.12.0
 	github.com/shurcooL/vfsgen v0.0.0-20181202132449-6a9ea43bcacd
-	github.com/sirupsen/logrus v1.9.3
+	github.com/sirupsen/logrus v1.9.4-0.20230606125235-dd1b4c2e81af
 	github.com/spf13/cobra v1.8.1
 	github.com/stretchr/testify v1.10.0
 	github.com/thedevsaddam/retry v0.0.0-20200324223450-9769a859cc6d
@@ -171,6 +171,7 @@ require (
 	github.com/coreos/go-systemd/v22 v22.5.0 // indirect
 	github.com/coreos/vcontext v0.0.0-20230201181013-d72178a18687 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
+	github.com/djherbis/times v1.6.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/elliotwutingfeng/asciiset v0.0.0-20230602022725-51bbb787efab // indirect
 	github.com/emicklei/go-restful/v3 v3.12.1 // indirect
@@ -286,7 +287,6 @@ require (
 	google.golang.org/genproto v0.0.0-20240722135656-d784300faade // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240826202546-f6391c0de4c7 // indirect
 	google.golang.org/protobuf v1.35.1 // indirect
-	gopkg.in/djherbis/times.v1 v1.3.0 // indirect
 	gopkg.in/evanphx/json-patch.v4 v4.12.0 // indirect
 	gopkg.in/gcfg.v1 v1.2.3 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
@@ -313,6 +313,8 @@ replace (
 // sigs.k8s.io/cluster-api => sigs.k8s.io/cluster-api v0.4.5
 // sigs.k8s.io/cluster-api-provider-aws => github.com/openshift/cluster-api-provider-aws v0.2.1-0.20200929152424-eab2e087f366 // Indirect dependency through MAO from cluster API providers
 )
+
+replace github.com/openshift/assisted-image-service => github.com/phani2898/assisted-image-service v0.0.0-20250227091020-9e96728639ff
 
 replace sigs.k8s.io/cluster-api-provider-ibmcloud => sigs.k8s.io/cluster-api-provider-ibmcloud v0.9.0-beta.1.0.20241119124454-8460807566cf
 
