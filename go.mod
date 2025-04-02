@@ -314,7 +314,7 @@ replace (
 // sigs.k8s.io/cluster-api-provider-aws => github.com/openshift/cluster-api-provider-aws v0.2.1-0.20200929152424-eab2e087f366 // Indirect dependency through MAO from cluster API providers
 )
 
-replace github.com/openshift/assisted-image-service => github.com/phani2898/assisted-image-service v0.0.0-20250227091020-9e96728639ff
+replace github.com/openshift/assisted-image-service => github.com/phani2898/assisted-image-service v0.0.0-20250402133712-5b5efe7921ce
 
 replace sigs.k8s.io/cluster-api-provider-ibmcloud => sigs.k8s.io/cluster-api-provider-ibmcloud v0.9.0-beta.1.0.20241119124454-8460807566cf
 
