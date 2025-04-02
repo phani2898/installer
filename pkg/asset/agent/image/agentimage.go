@@ -121,6 +121,10 @@ func (a *AgentImage) Generate(ctx context.Context, dependencies asset.Parents) e
 		return err
 	}
 
+	// Debug statements for s390x ABI FIPS ISO Bug
+	logrus.Debug("agentArtifacts Phani: %s", agentArtifacts)
+	logrus.Debug("Generate kargs Phani: %s", agentArtifacts.Kargs)
+
 	err = a.appendKargs(agentArtifacts.Kargs)
 	if err != nil {
 		return err
@@ -167,6 +171,8 @@ func (a *AgentImage) appendKargs(kargs string) error {
 	if kargs == "" {
 		return nil
 	}
+
+	logrus.Debug("appendKargs kargs Phani: %s", kargs)
 
 	fileInfo, err := isoeditor.NewKargsReader(a.isoPath, kargs)
 	if err != nil {
