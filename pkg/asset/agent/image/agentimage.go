@@ -154,10 +154,12 @@ func (a *AgentImage) overwriteFileData(fileInfo []isoeditor.FileData) error {
 		}
 		defer file.Close()
 
+		logrus.Debug("Installer - About to copy the file data using overwrite Phani")
 		_, err = io.Copy(file, fileData.Data)
 		if err != nil {
 			errs = append(errs, err)
 		}
+		logrus.Debug("Installer - Copied the file data using overwrite Phani")
 	}
 
 	return errors.Join(errs...)
@@ -174,6 +176,9 @@ func (a *AgentImage) appendKargs(kargs string) error {
 	if err != nil {
 		return err
 	}
+
+	logrus.Debug("Installer Fetched the fileInfo Phani")
+
 	return a.overwriteFileData(fileInfo)
 }
 
