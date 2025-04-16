@@ -253,6 +253,7 @@ require (
 	github.com/openshift/machine-api-operator v0.2.1-0.20240930121047-57b7917e6140 // indirect
 	github.com/opentracing/opentracing-go v1.2.0 // indirect
 	github.com/peterbourgon/diskv v2.0.1+incompatible // indirect
+	github.com/phani2898/assisted-image-service v0.0.0-20250416071210-065f41e0cdfd // indirect
 	github.com/pierrec/lz4/v4 v4.1.17 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/pkg/xattr v0.4.9 // indirect
@@ -314,7 +315,7 @@ replace (
 // sigs.k8s.io/cluster-api-provider-aws => github.com/openshift/cluster-api-provider-aws v0.2.1-0.20200929152424-eab2e087f366 // Indirect dependency through MAO from cluster API providers
 )
 
-replace github.com/openshift/assisted-image-service => github.com/phani2898/assisted-image-service v0.0.0-20250416071210-065f41e0cdfd
+replace github.com/openshift/assisted-image-service => github.com/phani2898/assisted-image-service v0.0.0-20250416072827-6bc3b394e5ed
 
 replace sigs.k8s.io/cluster-api-provider-ibmcloud => sigs.k8s.io/cluster-api-provider-ibmcloud v0.9.0-beta.1.0.20241119124454-8460807566cf
 
