@@ -671,10 +671,8 @@ github.com/pelletier/go-toml v1.9.5 h1:4yBQzkHv+7BHq2PQUZF3Mx0IYxG7LsP222s7Agd3v
 github.com/pelletier/go-toml v1.9.5/go.mod h1:u1nR/EPcESfeI/szUZKdtJ0xRNbUoANCkoOuaOx1Y+c=
 github.com/peterbourgon/diskv v2.0.1+incompatible h1:UBdAOUP5p4RWqPBg048CAvpKN+vxiaj6gdUUzhl4XmI=
 github.com/peterbourgon/diskv v2.0.1+incompatible/go.mod h1:uqqh8zWWbv1HBMNONnaR/tNboyR3/BZd58JJSHlUSCU=
-github.com/phani2898/assisted-image-service v0.0.0-20250416071210-065f41e0cdfd h1:PFrD85rtCYb/+mcdPscNhrXmmtSleONGuNOeNeJbMB8=
-github.com/phani2898/assisted-image-service v0.0.0-20250416071210-065f41e0cdfd/go.mod h1:wjzyFZ6dtnZ7cK+9vwCZxtyafapZf9JowYrAZZ4e3tA=
-github.com/phani2898/assisted-image-service v0.0.0-20250416072827-6bc3b394e5ed h1:B7Fvp5L6tjXi6gqh3vJxhFtV9QQlJVzGw6JuekcUQWg=
-github.com/phani2898/assisted-image-service v0.0.0-20250416072827-6bc3b394e5ed/go.mod h1:wjzyFZ6dtnZ7cK+9vwCZxtyafapZf9JowYrAZZ4e3tA=
+github.com/phani2898/assisted-image-service v0.0.0-20250416085719-da532fdd0518 h1:jq6YjvYbY+sP0c6FyHZBi9P463uAGM/wqcPGjc3yk2M=
+github.com/phani2898/assisted-image-service v0.0.0-20250416085719-da532fdd0518/go.mod h1:wjzyFZ6dtnZ7cK+9vwCZxtyafapZf9JowYrAZZ4e3tA=
 github.com/pierrec/lz4/v4 v4.1.17 h1:kV4Ip+/hUBC+8T6+2EgburRtkE9ef4nbY3f4dFhGjMc=
 github.com/pierrec/lz4/v4 v4.1.17/go.mod h1:gZWDp/Ze/IJXGXf23ltt2EXimqmTUXEy0GFuRQyBid4=
 github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c h1:+mdjkGKdHQG3305AYmdv1U2eRNDiU2ErMBj1gwrq8eQ=
