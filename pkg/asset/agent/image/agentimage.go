@@ -170,7 +170,7 @@ func (a *AgentImage) appendKargs(kargs string) error {
 		return nil
 	}
 
-	logrus.Debug("Installer appendKargs Phani: %s", kargs)
+	logrus.Debug("Installer appendKargs Phani ", kargs)
 
 	fileInfo, err := isoeditor.NewKargsReader(a.isoPath, kargs)
 	if err != nil {
@@ -178,6 +178,9 @@ func (a *AgentImage) appendKargs(kargs string) error {
 	}
 
 	logrus.Debug("Installer Fetched the fileInfo Phani")
+	for _, file := range fileInfo {
+		logrus.Debug("Installer File Name Phani ", file.Filename)
+	}
 
 	return a.overwriteFileData(fileInfo)
 }
