@@ -2,6 +2,7 @@ package image
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -129,6 +130,46 @@ func (a *AgentImage) Generate(ctx context.Context, dependencies asset.Parents) e
 	return nil
 }
 
+// FindKargsFilesMatchingIgnition returns paths of kargs config files that match the ignition config file in the ISO.
+// This is introduced to tackle various archs having different files for both.
+// Returns nil if no matches found or on parsing errors.
+func FindKargsFilesMatchingIgnition(isoPath string) []string {
+	ignitionData, err := isoeditor.ReadFileFromISO(isoPath, "coreos/igninfo.json")
+	if err != nil {
+		return nil
+	}
+	var ignitionConfig isoeditor.IgnitionInfo
+	if err = json.Unmarshal(ignitionData, &ignitionConfig); err != nil {
+		return nil
+	}
+
+	kargsData, err := isoeditor.ReadFileFromISO(isoPath, "coreos/kargs.json")
+	if err != nil {
+		return nil
+	}
+	var kargsConfig struct {
+		Default string `json:"default"`
+		Files   []struct {
+			Path   string `json:"path,omitempty"`
+			Offset int64  `json:"offset,omitempty"`
+			End    string `json:"end,omitempty"`
+			Pad    string `json:"pad,omitempty"`
+		} `json:"files"`
+		Size int `json:"size"`
+	}
+	if err := json.Unmarshal(kargsData, &kargsConfig); err != nil {
+		return nil
+	}
+	var kargsFiles []string
+	for _, file := range kargsConfig.Files {
+		if file.Path == ignitionConfig.File {
+			kargsFiles = append(kargsFiles, file.Path)
+		}
+	}
+
+	return kargsFiles
+}
+
 // updateIgnitionContent updates the ignition data into the corresponding images in the ISO.
 func (a *AgentImage) updateIgnitionContent(agentArtifacts *AgentArtifacts) error {
 	ignitionc := &isoeditor.IgnitionContent{}
@@ -136,6 +177,11 @@ func (a *AgentImage) updateIgnitionContent(agentArtifacts *AgentArtifacts) error
 	fileInfo, err := isoeditor.NewIgnitionImageReader(a.isoPath, ignitionc)
 	if err != nil {
 		return err
+	}
+
+	logrus.Debug("Installer Ignition Fetched the fileInfo Phani")
+	for _, file := range fileInfo {
+		logrus.Debug("Installer Ignition File Name Phani ", file.Filename)
 	}
 
 	return a.overwriteFileData(fileInfo)
@@ -160,6 +206,13 @@ func (a *AgentImage) overwriteFileData(fileInfo []isoeditor.FileData) error {
 			errs = append(errs, err)
 		}
 		logrus.Debug("Installer - Copied the file data using overwrite Phani")
+
+		// Explicitly sync to disk
+		if err := file.Sync(); err != nil {
+			return fmt.Errorf("failed to sync file %s: %w", filename, err)
+		}
+		logrus.Debug("Installer - Synced the file Phani")
+
 	}
 
 	return errors.Join(errs...)
