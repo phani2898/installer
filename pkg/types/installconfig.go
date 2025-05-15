@@ -17,6 +17,7 @@ import (
 	"github.com/openshift/installer/pkg/types/external"
 	"github.com/openshift/installer/pkg/types/featuregates"
 	"github.com/openshift/installer/pkg/types/gcp"
+	"github.com/openshift/installer/pkg/types/gravity"
 	"github.com/openshift/installer/pkg/types/ibmcloud"
 	"github.com/openshift/installer/pkg/types/none"
 	"github.com/openshift/installer/pkg/types/nutanix"
@@ -320,6 +321,10 @@ type Platform struct {
 	// Nutanix is the configuration used when installing on Nutanix.
 	// +optional
 	Nutanix *nutanix.Platform `json:"nutanix,omitempty"`
+
+	// Gravity is the configuration used when installing on IBMZ LPAR.
+	// +optional
+	Gravity *gravity.Platform `json:"gravity,omitempty"`
 }
 
 // OperatorPublishingStrategy is used to control the visibility of the components which can be used to have a mix of public

@@ -14,6 +14,7 @@ import (
 	azureconfig "github.com/openshift/installer/pkg/asset/installconfig/azure"
 	baremetalconfig "github.com/openshift/installer/pkg/asset/installconfig/baremetal"
 	gcpconfig "github.com/openshift/installer/pkg/asset/installconfig/gcp"
+	gravityconfig "github.com/openshift/installer/pkg/asset/installconfig/gravity"
 	ibmcloudconfig "github.com/openshift/installer/pkg/asset/installconfig/ibmcloud"
 	nutanixconfig "github.com/openshift/installer/pkg/asset/installconfig/nutanix"
 	openstackconfig "github.com/openshift/installer/pkg/asset/installconfig/openstack"
@@ -25,6 +26,7 @@ import (
 	"github.com/openshift/installer/pkg/types/baremetal"
 	"github.com/openshift/installer/pkg/types/external"
 	"github.com/openshift/installer/pkg/types/gcp"
+	"github.com/openshift/installer/pkg/types/gravity"
 	"github.com/openshift/installer/pkg/types/ibmcloud"
 	"github.com/openshift/installer/pkg/types/none"
 	"github.com/openshift/installer/pkg/types/nutanix"
@@ -106,6 +108,9 @@ func (a *platform) Generate(ctx context.Context, _ asset.Parents) error {
 		if err != nil {
 			return err
 		}
+	case gravity.Name:
+		a.Gravity, err = gravityconfig.Platform()
+
 	default:
 		return fmt.Errorf("unknown platform type %q", platform)
 	}
