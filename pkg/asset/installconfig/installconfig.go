@@ -12,6 +12,7 @@ import (
 	"github.com/openshift/installer/pkg/asset/installconfig/aws"
 	icazure "github.com/openshift/installer/pkg/asset/installconfig/azure"
 	icgcp "github.com/openshift/installer/pkg/asset/installconfig/gcp"
+	icgravity "github.com/openshift/installer/pkg/asset/installconfig/gravity"
 	icibmcloud "github.com/openshift/installer/pkg/asset/installconfig/ibmcloud"
 	icnutanix "github.com/openshift/installer/pkg/asset/installconfig/nutanix"
 	icopenstack "github.com/openshift/installer/pkg/asset/installconfig/openstack"
@@ -35,6 +36,7 @@ type InstallConfig struct {
 	IBMCloud *icibmcloud.Metadata `json:"ibmcloud,omitempty"`
 	PowerVS  *icpowervs.Metadata  `json:"powervs,omitempty"`
 	VSphere  *icvsphere.Metadata  `json:"vsphere,omitempty"`
+	Gravity  *icgravity.Metadata  `json:"gravity,omitempty"`
 }
 
 var _ asset.WritableAsset = (*InstallConfig)(nil)
@@ -99,6 +101,7 @@ func (a *InstallConfig) Generate(ctx context.Context, parents asset.Parents) err
 	a.Config.Ovirt = platform.Ovirt
 	a.Config.PowerVS = platform.PowerVS
 	a.Config.Nutanix = platform.Nutanix
+	a.Config.Gravity = platform.Gravity
 
 	defaults.SetInstallConfigDefaults(a.Config)
 

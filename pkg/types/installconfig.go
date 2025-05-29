@@ -43,6 +43,7 @@ var (
 		azure.Name,
 		baremetal.Name,
 		gcp.Name,
+		gravity.Name,
 		ibmcloud.Name,
 		nutanix.Name,
 		openstack.Name,
@@ -374,6 +375,8 @@ func (p *Platform) Name() string {
 		return powervs.Name
 	case p.Nutanix != nil:
 		return nutanix.Name
+	case p.Gravity != nil:
+		return gravity.Name
 	default:
 		return ""
 	}

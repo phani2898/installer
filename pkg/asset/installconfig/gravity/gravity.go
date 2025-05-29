@@ -10,6 +10,16 @@ import (
 // Gathers all the inputs required for LPAR installation on gravity platform
 func Platform() (*gravity.Platform, error) {
 
+	lbVIP, err := getIP("Load Balancer VIP", "Virtual IP address for the OpenShift Loadbalancer")
+	if err != nil {
+		return nil, err
+	}
+
+	dnsIP, err := getIP("External DNS IP", "IP address of the external DNS Server")
+	if err != nil {
+		return nil, err
+	}
+
 	networkType, err := selectNetworkType()
 	if err != nil {
 		return nil, fmt.Errorf("failed to survey desired network type: %w", err)
@@ -25,18 +35,49 @@ func Platform() (*gravity.Platform, error) {
 		return nil, fmt.Errorf("failed to survey dhcp enablement: %w", err)
 	}
 
+	controlNodesProfile, err := selectNodesProfile("Control")
+	if err != nil {
+		return nil, fmt.Errorf("failed to survey control nodes profile: %w", err)
+	}
+
+	computeNodesProfile, err := selectNodesProfile("Compute")
+	if err != nil {
+		return nil, fmt.Errorf("failed to survey compute nodes profile: %w", err)
+	}
+
 	var hosts []*gravity.Host
 
 	gravityInfo := &gravity.Platform{
-		ExternalDNSIP:  "",
-		LoadBalancerIP: "",
-		NetworkType:    networkType,
-		DiskType:       diskType,
-		DHCP:           enableDHCP,
-		Hosts:          hosts,
+		ExternalDNSIP:       dnsIP,
+		LoadBalancerVIP:     lbVIP,
+		NetworkType:         networkType,
+		DiskType:            diskType,
+		ControlNodesProfile: controlNodesProfile,
+		ComputeNodesProfile: computeNodesProfile,
+		DHCP:                enableDHCP,
+		Hosts:               hosts,
 	}
 
 	return gravityInfo, nil
+}
+
+func getIP(msg string, help string) (ipAddress string, err error) {
+
+	err = survey.Ask([]*survey.Question{
+		{
+			Prompt: &survey.Input{
+				Message: msg,
+				Help:    help,
+			},
+			Validate: survey.Required,
+		},
+	}, &ipAddress)
+
+	if err != nil {
+		return "", fmt.Errorf("failed to get %s: %w", msg, err)
+	}
+
+	return ipAddress, nil
 }
 
 func selectNetworkType() (networkType string, err error) {
@@ -107,4 +148,26 @@ func selectDHCP() (enableDHCP bool, err error) {
 		enableDHCP = false
 	}
 	return enableDHCP, nil
+}
+
+func selectNodesProfile(nodeType string) (nodeProfile string, err error) {
+	var profileOptions = []string{"4x16", "8x16", "8x32", "16x32", "16x64"}
+
+	err = survey.Ask([]*survey.Question{
+		{
+			Prompt: &survey.Select{
+				Message: fmt.Sprintf("%s Nodes Profile", nodeType),
+				Help:    fmt.Sprintf("Chose the desired vCPU and memory profile for %s nodes", nodeType),
+				Default: "4x16",
+				Options: profileOptions,
+			},
+			Validate: survey.Required,
+		},
+	}, &nodeProfile)
+
+	if err != nil {
+		return "", err
+	}
+
+	return nodeProfile, nil
 }

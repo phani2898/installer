@@ -110,6 +110,9 @@ func (a *platform) Generate(ctx context.Context, _ asset.Parents) error {
 		}
 	case gravity.Name:
 		a.Gravity, err = gravityconfig.Platform()
+		if err != nil {
+			return err
+		}
 
 	default:
 		return fmt.Errorf("unknown platform type %q", platform)
