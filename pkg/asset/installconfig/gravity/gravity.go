@@ -10,12 +10,12 @@ import (
 // Gathers all the inputs required for LPAR installation on gravity platform
 func Platform() (*gravity.Platform, error) {
 
-	lbVIP, err := getIP("Load Balancer VIP", "Virtual IP address for the OpenShift Loadbalancer")
+	lbVIP, err := getVIP("Load Balancer VIP", "Virtual IP address for the OpenShift Loadbalancer")
 	if err != nil {
 		return nil, err
 	}
 
-	dnsIP, err := getIP("External DNS IP", "IP address of the external DNS Server")
+	dnsVIP, err := getVIP("DNS VIP", "IP address of the external DNS Server")
 	if err != nil {
 		return nil, err
 	}
@@ -48,7 +48,7 @@ func Platform() (*gravity.Platform, error) {
 	var hosts []*gravity.Host
 
 	gravityInfo := &gravity.Platform{
-		ExternalDNSIP:       dnsIP,
+		DNSVIP:              dnsVIP,
 		LoadBalancerVIP:     lbVIP,
 		NetworkType:         networkType,
 		DiskType:            diskType,
@@ -61,7 +61,7 @@ func Platform() (*gravity.Platform, error) {
 	return gravityInfo, nil
 }
 
-func getIP(msg string, help string) (ipAddress string, err error) {
+func getVIP(msg string, help string) (ipAddress string, err error) {
 
 	err = survey.Ask([]*survey.Question{
 		{

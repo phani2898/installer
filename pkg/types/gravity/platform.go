@@ -20,7 +20,7 @@ type Host struct {
 
 // Platform stores all the required details of booting an LPAR as a node.
 type Platform struct {
-	ExternalDNSIP       string  `json:"externalDNSIP"`
+	DNSVIP              string  `json:"dnsVIP"`
 	LoadBalancerVIP     string  `json:"loadBalancerVIP"`
 	NetworkType         string  `json:"networkType"`
 	DiskType            string  `json:"diskType"`
