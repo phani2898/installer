@@ -228,6 +228,7 @@ func (a *AgentImage) appendKargs(kargs string) error {
 		return nil
 	}
 
+	fmt.Println("Printing cpuArch in asset Phani: ", a.cpuArch)
 	if a.cpuArch == "s390x" {
 		err := isoeditor.EmbedKargs(a.isoPath, kargs)
 		if err != nil {
