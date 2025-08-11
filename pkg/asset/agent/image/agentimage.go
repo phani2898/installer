@@ -2,7 +2,6 @@ package image
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -116,6 +115,12 @@ func (a *AgentImage) Generate(ctx context.Context, dependencies asset.Parents) e
 		}
 	}
 
+	// // Check if the ignition file & kargs files are the same for the ISO.
+	// filesMatching, err := verifyKargsFilesMatchingIgnition(a.isoPath)
+	// if err != nil {
+	// 	return fmt.Errorf("failed to verify kargs files matching ignition: %w", err)
+	// }
+
 	// Update Ignition images
 	err = a.updateIgnitionContent(agentArtifacts)
 	if err != nil {
@@ -130,45 +135,45 @@ func (a *AgentImage) Generate(ctx context.Context, dependencies asset.Parents) e
 	return nil
 }
 
-// FindKargsFilesMatchingIgnition returns paths of kargs config files that match the ignition config file in the ISO.
-// This is introduced to tackle various archs having different files for both.
-// Returns nil if no matches found or on parsing errors.
-func FindKargsFilesMatchingIgnition(isoPath string) []string {
-	ignitionData, err := isoeditor.ReadFileFromISO(isoPath, "coreos/igninfo.json")
-	if err != nil {
-		return nil
-	}
-	var ignitionConfig isoeditor.IgnitionInfo
-	if err = json.Unmarshal(ignitionData, &ignitionConfig); err != nil {
-		return nil
-	}
+// // findKargsFilesMatchingIgnition returns paths of kargs config files that match the ignition config file in the ISO.
+// // This is introduced to tackle various archs having different files for both.
+// // Returns nil if no matches found or on parsing errors.
+// func verifyKargsFilesMatchingIgnition(isoPath string) (bool, error) {
+// 	ignitionData, err := isoeditor.ReadFileFromISO(isoPath, "coreos/igninfo.json")
+// 	if err != nil {
+// 		return false, err
+// 	}
+// 	var ignitionConfig isoeditor.IgnitionInfo
+// 	if err = json.Unmarshal(ignitionData, &ignitionConfig); err != nil {
+// 		return false, err
+// 	}
 
-	kargsData, err := isoeditor.ReadFileFromISO(isoPath, "coreos/kargs.json")
-	if err != nil {
-		return nil
-	}
-	var kargsConfig struct {
-		Default string `json:"default"`
-		Files   []struct {
-			Path   string `json:"path,omitempty"`
-			Offset int64  `json:"offset,omitempty"`
-			End    string `json:"end,omitempty"`
-			Pad    string `json:"pad,omitempty"`
-		} `json:"files"`
-		Size int `json:"size"`
-	}
-	if err := json.Unmarshal(kargsData, &kargsConfig); err != nil {
-		return nil
-	}
-	var kargsFiles []string
-	for _, file := range kargsConfig.Files {
-		if file.Path == ignitionConfig.File {
-			kargsFiles = append(kargsFiles, file.Path)
-		}
-	}
+// 	kargsData, err := isoeditor.ReadFileFromISO(isoPath, "coreos/kargs.json")
+// 	if err != nil {
+// 		return false, err
+// 	}
+// 	var kargsConfig struct {
+// 		Default string `json:"default"`
+// 		Files   []struct {
+// 			Path   string `json:"path,omitempty"`
+// 			Offset int64  `json:"offset,omitempty"`
+// 			End    string `json:"end,omitempty"`
+// 			Pad    string `json:"pad,omitempty"`
+// 		} `json:"files"`
+// 		Size int `json:"size"`
+// 	}
+// 	if err := json.Unmarshal(kargsData, &kargsConfig); err != nil {
+// 		return false, err
+// 	}
+// 	var matched bool
+// 	for _, file := range kargsConfig.Files {
+// 		if file.Path == ignitionConfig.File {
+// 			matched = true
+// 		}
+// 	}
 
-	return kargsFiles
-}
+// 	return matched, nil
+// }
 
 // updateIgnitionContent updates the ignition data into the corresponding images in the ISO.
 func (a *AgentImage) updateIgnitionContent(agentArtifacts *AgentArtifacts) error {
@@ -223,7 +228,14 @@ func (a *AgentImage) appendKargs(kargs string) error {
 		return nil
 	}
 
-	logrus.Debug("Installer appendKargs Phani ", kargs)
+	if a.cpuArch == "s390x" {
+		err := isoeditor.EmbedKargs(a.isoPath, kargs)
+		if err != nil {
+			return err
+		} else {
+			return nil
+		}
+	}
 
 	fileInfo, err := isoeditor.NewKargsReader(a.isoPath, kargs)
 	if err != nil {
