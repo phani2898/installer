@@ -57,6 +57,45 @@ spec:
                 - ""
                 - amd64
                 type: string
+              diskSetup:
+                description: |-
+                  DiskSetup stores the type of disks that will be setup with MachineConfigs.
+                  The available types are etcd, swap and user-defined.
+                items:
+                  description: |-
+                    Disk defines the type of disk (etcd, swap or user-defined) and the configuration
+                    of each disk type.
+                  properties:
+                    etcd:
+                      description: DiskEtcd defines a disk type of etcd.
+                      properties:
+                        platformDiskID:
+                          type: string
+                      type: object
+                    swap:
+                      description: DiskSwap defines a disk type of swap.
+                      properties:
+                        platformDiskID:
+                          type: string
+                      type: object
+                    type:
+                      description: DiskType is the string representation of the three
+                        types disk setups
+                      enum:
+                      - etcd
+                      - swap
+                      - user-defined
+                      type: string
+                    userDefined:
+                      description: DiskUserDefined defines a disk type of user-defined.
+                      properties:
+                        mountPath:
+                          type: string
+                        platformDiskID:
+                          type: string
+                      type: object
+                  type: object
+                type: array
               fencing:
                 description: |-
                   Fencing stores the information about a baremetal host's management controller.
@@ -244,26 +283,105 @@ spec:
                         - storageAccountName
                         - type
                         type: object
+                      dataDisks:
+                        description: DataDisk specifies the parameters that are used
+                          to add one or more data disks to the machine.
+                        items:
+                          description: DataDisk specifies the parameters that are
+                            used to add one or more data disks to the machine.
+                          properties:
+                            cachingType:
+                              description: CachingType specifies the caching requirements.
+                              enum:
+                              - None
+                              - ReadOnly
+                              - ReadWrite
+                              type: string
+                            diskSizeGB:
+                              description: DiskSizeGB is the size in GB to assign
+                                to the data disk.
+                              format: int32
+                              type: integer
+                            lun:
+                              description: |-
+                                Lun Specifies the logical unit number of the data disk. This value is used to identify data disks within the VM and therefore must be unique for each data disk attached to a VM.
+                                The value must be between 0 and 63.
+                              format: int32
+                              type: integer
+                            managedDisk:
+                              description: ManagedDisk specifies the Managed Disk
+                                parameters for the data disk.
+                              properties:
+                                diskEncryptionSet:
+                                  description: DiskEncryptionSet specifies the customer-managed
+                                    disk encryption set resource id for the managed
+                                    disk.
+                                  properties:
+                                    id:
+                                      description: ID defines resourceID for diskEncryptionSet
+                                        resource. It must be in the same subscription
+                                      type: string
+                                  type: object
+                                securityProfile:
+                                  description: SecurityProfile specifies the security
+                                    profile for the managed disk.
+                                  properties:
+                                    diskEncryptionSet:
+                                      description: |-
+                                        DiskEncryptionSet specifies the customer-managed disk encryption set resource id for the
+                                        managed disk that is used for Customer Managed Key encrypted ConfidentialVM OS Disk and
+                                        VMGuest blob.
+                                      properties:
+                                        id:
+                                          description: ID defines resourceID for diskEncryptionSet
+                                            resource. It must be in the same subscription
+                                          type: string
+                                      type: object
+                                    securityEncryptionType:
+                                      description: |-
+                                        SecurityEncryptionType specifies the encryption type of the managed disk.
+                                        It is set to DiskWithVMGuestState to encrypt the managed disk along with the VMGuestState
+                                        blob, and to VMGuestStateOnly to encrypt the VMGuestState blob only.
+                                        When set to VMGuestStateOnly, VirtualizedTrustedPlatformModule should be set to Enabled.
+                                        When set to DiskWithVMGuestState, EncryptionAtHost should be disabled, SecureBoot and
+                                        VirtualizedTrustedPlatformModule should be set to Enabled.
+                                        It can be set only for Confidential VMs.
+                                      enum:
+                                      - VMGuestStateOnly
+                                      - DiskWithVMGuestState
+                                      type: string
+                                  type: object
+                                storageAccountType:
+                                  type: string
+                              type: object
+                            nameSuffix:
+                              description: |-
+                                NameSuffix is the suffix to be appended to the machine name to generate the disk name.
+                                Each disk name will be in format <machineName>_<nameSuffix>.
+                              type: string
+                          required:
+                          - diskSizeGB
+                          - nameSuffix
+                          type: object
+                        type: array
                       encryptionAtHost:
                         description: EncryptionAtHost enables encryption at the VM
                           host.
                         type: boolean
                       identity:
-                        default: None
+                        default: UserAssigned
                         description: |-
                           Identity is the type of identity used for the virtual machine.
-                          The type 'SystemAssigned' is an implicitly created identity.
-                          The generated identity will be assigned a Subscription contributor role.
                           The type 'UserAssigned' is a standalone Azure resource provided by the user
-                          and assigned to the VM
-                          Identity can only be set for control-plane nodes.
+                          and assigned to the VM.
+                          The default identity is a user-assigned identity, generated by the installer.
+                          This default is expected to change in future releases.
                         properties:
                           type:
                             description: Type specifies the type of identity to be
                               used.
                             enum:
                             - None
-                            - SystemAssigned
                             - UserAssigned
                             type: string
                           userAssignedIdentities:
@@ -1379,6 +1497,45 @@ spec:
                   - ""
                   - amd64
                   type: string
+                diskSetup:
+                  description: |-
+                    DiskSetup stores the type of disks that will be setup with MachineConfigs.
+                    The available types are etcd, swap and user-defined.
+                  items:
+                    description: |-
+                      Disk defines the type of disk (etcd, swap or user-defined) and the configuration
+                      of each disk type.
+                    properties:
+                      etcd:
+                        description: DiskEtcd defines a disk type of etcd.
+                        properties:
+                          platformDiskID:
+                            type: string
+                        type: object
+                      swap:
+                        description: DiskSwap defines a disk type of swap.
+                        properties:
+                          platformDiskID:
+                            type: string
+                        type: object
+                      type:
+                        description: DiskType is the string representation of the
+                          three types disk setups
+                        enum:
+                        - etcd
+                        - swap
+                        - user-defined
+                        type: string
+                      userDefined:
+                        description: DiskUserDefined defines a disk type of user-defined.
+                        properties:
+                          mountPath:
+                            type: string
+                          platformDiskID:
+                            type: string
+                        type: object
+                    type: object
+                  type: array
                 fencing:
                   description: |-
                     Fencing stores the information about a baremetal host's management controller.
@@ -1566,26 +1723,106 @@ spec:
                           - storageAccountName
                           - type
                           type: object
+                        dataDisks:
+                          description: DataDisk specifies the parameters that are
+                            used to add one or more data disks to the machine.
+                          items:
+                            description: DataDisk specifies the parameters that are
+                              used to add one or more data disks to the machine.
+                            properties:
+                              cachingType:
+                                description: CachingType specifies the caching requirements.
+                                enum:
+                                - None
+                                - ReadOnly
+                                - ReadWrite
+                                type: string
+                              diskSizeGB:
+                                description: DiskSizeGB is the size in GB to assign
+                                  to the data disk.
+                                format: int32
+                                type: integer
+                              lun:
+                                description: |-
+                                  Lun Specifies the logical unit number of the data disk. This value is used to identify data disks within the VM and therefore must be unique for each data disk attached to a VM.
+                                  The value must be between 0 and 63.
+                                format: int32
+                                type: integer
+                              managedDisk:
+                                description: ManagedDisk specifies the Managed Disk
+                                  parameters for the data disk.
+                                properties:
+                                  diskEncryptionSet:
+                                    description: DiskEncryptionSet specifies the customer-managed
+                                      disk encryption set resource id for the managed
+                                      disk.
+                                    properties:
+                                      id:
+                                        description: ID defines resourceID for diskEncryptionSet
+                                          resource. It must be in the same subscription
+                                        type: string
+                                    type: object
+                                  securityProfile:
+                                    description: SecurityProfile specifies the security
+                                      profile for the managed disk.
+                                    properties:
+                                      diskEncryptionSet:
+                                        description: |-
+                                          DiskEncryptionSet specifies the customer-managed disk encryption set resource id for the
+                                          managed disk that is used for Customer Managed Key encrypted ConfidentialVM OS Disk and
+                                          VMGuest blob.
+                                        properties:
+                                          id:
+                                            description: ID defines resourceID for
+                                              diskEncryptionSet resource. It must
+                                              be in the same subscription
+                                            type: string
+                                        type: object
+                                      securityEncryptionType:
+                                        description: |-
+                                          SecurityEncryptionType specifies the encryption type of the managed disk.
+                                          It is set to DiskWithVMGuestState to encrypt the managed disk along with the VMGuestState
+                                          blob, and to VMGuestStateOnly to encrypt the VMGuestState blob only.
+                                          When set to VMGuestStateOnly, VirtualizedTrustedPlatformModule should be set to Enabled.
+                                          When set to DiskWithVMGuestState, EncryptionAtHost should be disabled, SecureBoot and
+                                          VirtualizedTrustedPlatformModule should be set to Enabled.
+                                          It can be set only for Confidential VMs.
+                                        enum:
+                                        - VMGuestStateOnly
+                                        - DiskWithVMGuestState
+                                        type: string
+                                    type: object
+                                  storageAccountType:
+                                    type: string
+                                type: object
+                              nameSuffix:
+                                description: |-
+                                  NameSuffix is the suffix to be appended to the machine name to generate the disk name.
+                                  Each disk name will be in format <machineName>_<nameSuffix>.
+                                type: string
+                            required:
+                            - diskSizeGB
+                            - nameSuffix
+                            type: object
+                          type: array
                         encryptionAtHost:
                           description: EncryptionAtHost enables encryption at the
                             VM host.
                           type: boolean
                         identity:
-                          default: None
+                          default: UserAssigned
                           description: |-
                             Identity is the type of identity used for the virtual machine.
-                            The type 'SystemAssigned' is an implicitly created identity.
-                            The generated identity will be assigned a Subscription contributor role.
                             The type 'UserAssigned' is a standalone Azure resource provided by the user
-                            and assigned to the VM
-                            Identity can only be set for control-plane nodes.
+                            and assigned to the VM.
+                            The default identity is a user-assigned identity, generated by the installer.
+                            This default is expected to change in future releases.
                           properties:
                             type:
                               description: Type specifies the type of identity to
                                 be used.
                               enum:
                               - None
-                              - SystemAssigned
                               - UserAssigned
                               type: string
                             userAssignedIdentities:
@@ -2640,6 +2877,45 @@ spec:
                 - ""
                 - amd64
                 type: string
+              diskSetup:
+                description: |-
+                  DiskSetup stores the type of disks that will be setup with MachineConfigs.
+                  The available types are etcd, swap and user-defined.
+                items:
+                  description: |-
+                    Disk defines the type of disk (etcd, swap or user-defined) and the configuration
+                    of each disk type.
+                  properties:
+                    etcd:
+                      description: DiskEtcd defines a disk type of etcd.
+                      properties:
+                        platformDiskID:
+                          type: string
+                      type: object
+                    swap:
+                      description: DiskSwap defines a disk type of swap.
+                      properties:
+                        platformDiskID:
+                          type: string
+                      type: object
+                    type:
+                      description: DiskType is the string representation of the three
+                        types disk setups
+                      enum:
+                      - etcd
+                      - swap
+                      - user-defined
+                      type: string
+                    userDefined:
+                      description: DiskUserDefined defines a disk type of user-defined.
+                      properties:
+                        mountPath:
+                          type: string
+                        platformDiskID:
+                          type: string
+                      type: object
+                  type: object
+                type: array
               fencing:
                 description: |-
                   Fencing stores the information about a baremetal host's management controller.
@@ -2827,26 +3103,105 @@ spec:
                         - storageAccountName
                         - type
                         type: object
+                      dataDisks:
+                        description: DataDisk specifies the parameters that are used
+                          to add one or more data disks to the machine.
+                        items:
+                          description: DataDisk specifies the parameters that are
+                            used to add one or more data disks to the machine.
+                          properties:
+                            cachingType:
+                              description: CachingType specifies the caching requirements.
+                              enum:
+                              - None
+                              - ReadOnly
+                              - ReadWrite
+                              type: string
+                            diskSizeGB:
+                              description: DiskSizeGB is the size in GB to assign
+                                to the data disk.
+                              format: int32
+                              type: integer
+                            lun:
+                              description: |-
+                                Lun Specifies the logical unit number of the data disk. This value is used to identify data disks within the VM and therefore must be unique for each data disk attached to a VM.
+                                The value must be between 0 and 63.
+                              format: int32
+                              type: integer
+                            managedDisk:
+                              description: ManagedDisk specifies the Managed Disk
+                                parameters for the data disk.
+                              properties:
+                                diskEncryptionSet:
+                                  description: DiskEncryptionSet specifies the customer-managed
+                                    disk encryption set resource id for the managed
+                                    disk.
+                                  properties:
+                                    id:
+                                      description: ID defines resourceID for diskEncryptionSet
+                                        resource. It must be in the same subscription
+                                      type: string
+                                  type: object
+                                securityProfile:
+                                  description: SecurityProfile specifies the security
+                                    profile for the managed disk.
+                                  properties:
+                                    diskEncryptionSet:
+                                      description: |-
+                                        DiskEncryptionSet specifies the customer-managed disk encryption set resource id for the
+                                        managed disk that is used for Customer Managed Key encrypted ConfidentialVM OS Disk and
+                                        VMGuest blob.
+                                      properties:
+                                        id:
+                                          description: ID defines resourceID for diskEncryptionSet
+                                            resource. It must be in the same subscription
+                                          type: string
+                                      type: object
+                                    securityEncryptionType:
+                                      description: |-
+                                        SecurityEncryptionType specifies the encryption type of the managed disk.
+                                        It is set to DiskWithVMGuestState to encrypt the managed disk along with the VMGuestState
+                                        blob, and to VMGuestStateOnly to encrypt the VMGuestState blob only.
+                                        When set to VMGuestStateOnly, VirtualizedTrustedPlatformModule should be set to Enabled.
+                                        When set to DiskWithVMGuestState, EncryptionAtHost should be disabled, SecureBoot and
+                                        VirtualizedTrustedPlatformModule should be set to Enabled.
+                                        It can be set only for Confidential VMs.
+                                      enum:
+                                      - VMGuestStateOnly
+                                      - DiskWithVMGuestState
+                                      type: string
+                                  type: object
+                                storageAccountType:
+                                  type: string
+                              type: object
+                            nameSuffix:
+                              description: |-
+                                NameSuffix is the suffix to be appended to the machine name to generate the disk name.
+                                Each disk name will be in format <machineName>_<nameSuffix>.
+                              type: string
+                          required:
+                          - diskSizeGB
+                          - nameSuffix
+                          type: object
+                        type: array
                       encryptionAtHost:
                         description: EncryptionAtHost enables encryption at the VM
                           host.
                         type: boolean
                       identity:
-                        default: None
+                        default: UserAssigned
                         description: |-
                           Identity is the type of identity used for the virtual machine.
-                          The type 'SystemAssigned' is an implicitly created identity.
-                          The generated identity will be assigned a Subscription contributor role.
                           The type 'UserAssigned' is a standalone Azure resource provided by the user
-                          and assigned to the VM
-                          Identity can only be set for control-plane nodes.
+                          and assigned to the VM.
+                          The default identity is a user-assigned identity, generated by the installer.
+                          This default is expected to change in future releases.
                         properties:
                           type:
                             description: Type specifies the type of identity to be
                               used.
                             enum:
                             - None
-                            - SystemAssigned
                             - UserAssigned
                             type: string
                           userAssignedIdentities:
@@ -3905,13 +4260,14 @@ spec:
               "Passthrough": copy the credentials with all of the overall permissions for each CredentialsRequest
               "Manual": CredentialsRequests must be handled manually by the user
 
-              For each of the following platforms, the field can set to the specified values. For all other platforms, the
+              For each of the following platforms, the field can be set to the specified values. For all other platforms, the
               field must not be set.
               AWS: "Mint", "Passthrough", "Manual"
               Azure: "Passthrough", "Manual"
               AzureStack: "Manual"
               GCP: "Mint", "Passthrough", "Manual"
               IBMCloud: "Manual"
+              OpenStack: "Passthrough"
               PowerVS: "Manual"
               Nutanix: "Manual"
             enum:
@@ -4268,12 +4624,6 @@ spec:
                           type: string
                         type: array
                     type: object
-                  experimentalPropagateUserTags:
-                    description: |-
-                      The field is deprecated. ExperimentalPropagateUserTags is an experimental
-                      flag that directs in-cluster operators to include the specified
-                      user tags in the tags of the AWS resources that the operators create.
-                    type: boolean
                   hostedZone:
                     description: |-
                       HostedZone is the ID of an existing hosted zone into which to add DNS
@@ -4562,26 +4912,105 @@ spec:
                         - storageAccountName
                         - type
                         type: object
+                      dataDisks:
+                        description: DataDisk specifies the parameters that are used
+                          to add one or more data disks to the machine.
+                        items:
+                          description: DataDisk specifies the parameters that are
+                            used to add one or more data disks to the machine.
+                          properties:
+                            cachingType:
+                              description: CachingType specifies the caching requirements.
+                              enum:
+                              - None
+                              - ReadOnly
+                              - ReadWrite
+                              type: string
+                            diskSizeGB:
+                              description: DiskSizeGB is the size in GB to assign
+                                to the data disk.
+                              format: int32
+                              type: integer
+                            lun:
+                              description: |-
+                                Lun Specifies the logical unit number of the data disk. This value is used to identify data disks within the VM and therefore must be unique for each data disk attached to a VM.
+                                The value must be between 0 and 63.
+                              format: int32
+                              type: integer
+                            managedDisk:
+                              description: ManagedDisk specifies the Managed Disk
+                                parameters for the data disk.
+                              properties:
+                                diskEncryptionSet:
+                                  description: DiskEncryptionSet specifies the customer-managed
+                                    disk encryption set resource id for the managed
+                                    disk.
+                                  properties:
+                                    id:
+                                      description: ID defines resourceID for diskEncryptionSet
+                                        resource. It must be in the same subscription
+                                      type: string
+                                  type: object
+                                securityProfile:
+                                  description: SecurityProfile specifies the security
+                                    profile for the managed disk.
+                                  properties:
+                                    diskEncryptionSet:
+                                      description: |-
+                                        DiskEncryptionSet specifies the customer-managed disk encryption set resource id for the
+                                        managed disk that is used for Customer Managed Key encrypted ConfidentialVM OS Disk and
+                                        VMGuest blob.
+                                      properties:
+                                        id:
+                                          description: ID defines resourceID for diskEncryptionSet
+                                            resource. It must be in the same subscription
+                                          type: string
+                                      type: object
+                                    securityEncryptionType:
+                                      description: |-
+                                        SecurityEncryptionType specifies the encryption type of the managed disk.
+                                        It is set to DiskWithVMGuestState to encrypt the managed disk along with the VMGuestState
+                                        blob, and to VMGuestStateOnly to encrypt the VMGuestState blob only.
+                                        When set to VMGuestStateOnly, VirtualizedTrustedPlatformModule should be set to Enabled.
+                                        When set to DiskWithVMGuestState, EncryptionAtHost should be disabled, SecureBoot and
+                                        VirtualizedTrustedPlatformModule should be set to Enabled.
+                                        It can be set only for Confidential VMs.
+                                      enum:
+                                      - VMGuestStateOnly
+                                      - DiskWithVMGuestState
+                                      type: string
+                                  type: object
+                                storageAccountType:
+                                  type: string
+                              type: object
+                            nameSuffix:
+                              description: |-
+                                NameSuffix is the suffix to be appended to the machine name to generate the disk name.
+                                Each disk name will be in format <machineName>_<nameSuffix>.
+                              type: string
+                          required:
+                          - diskSizeGB
+                          - nameSuffix
+                          type: object
+                        type: array
                       encryptionAtHost:
                         description: EncryptionAtHost enables encryption at the VM
                           host.
                         type: boolean
                       identity:
-                        default: None
+                        default: UserAssigned
                         description: |-
                           Identity is the type of identity used for the virtual machine.
-                          The type 'SystemAssigned' is an implicitly created identity.
-                          The generated identity will be assigned a Subscription contributor role.
                           The type 'UserAssigned' is a standalone Azure resource provided by the user
-                          and assigned to the VM
-                          Identity can only be set for control-plane nodes.
+                          and assigned to the VM.
+                          The default identity is a user-assigned identity, generated by the installer.
+                          This default is expected to change in future releases.
                         properties:
                           type:
                             description: Type specifies the type of identity to be
                               used.
                             enum:
                             - None
-                            - SystemAssigned
                             - UserAssigned
                             type: string
                           userAssignedIdentities:
@@ -4855,13 +5284,12 @@ spec:
                     type: string
                   outboundType:
                     default: Loadbalancer
-                    description: |-
-                      OutboundType is a strategy for how egress from cluster is achieved. When not specified default is "Loadbalancer".
-                      "NatGateway" is only available in TechPreview.
+                    description: OutboundType is a strategy for how egress from cluster
+                      is achieved. When not specified default is "Loadbalancer".
                     enum:
                     - ""
                     - Loadbalancer
-                    - NatGateway
+                    - NATGatewaySingleZone
                     - UserDefinedRouting
                     type: string
                   region:
@@ -4876,6 +5304,15 @@ spec:
                       resource group.
                       This resource group must be empty with no other resources when trying to use it for creating a cluster.
                       If empty, a new resource group will created for the cluster.
+                    type: string
+                  userProvisionedDNS:
+                    default: Disabled
+                    description: |-
+                      UserProvisionedDNS indicates if the customer is providing their own DNS solution in place of the default
+                      provisioned by the Installer.
+                    enum:
+                    - Enabled
+                    - Disabled
                     type: string
                   userTags:
                     additionalProperties:
@@ -5377,6 +5814,43 @@ spec:
                           type: string
                         type: array
                     type: object
+                  dns:
+                    description: |-
+                      DNS contains the dns zone information for the cluster. The DNS information can
+                      only be supplied during Shared VPC (XPN) installs.
+                    properties:
+                      privateZone:
+                        description: |-
+                          PrivateZone contains the information for a private DNS zone. The Private DNS Zone can
+                          only be supplied during Shared VPC (XPN) installs. The PrivateZone can exist or be
+                          created in a second service project; a project other than the one matching projectID
+                          or networkProjectID.
+                        properties:
+                          name:
+                            description: Name is the name of the dns-managed zone.
+                            type: string
+                          projectID:
+                            description: ProjectID is the project where the zone resides.
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    type: object
+                  endpoint:
+                    description: Endpoint is the private service connect endpoint.
+                    properties:
+                      name:
+                        description: Name contains the name of the private service
+                          connect endpoint.
+                        type: string
+                      region:
+                        description: |-
+                          Region is the region where the endpoint resides.
+                          When the region is empty, the location is assumed to be global.
+                        type: string
+                    required:
+                    - name
+                    type: object
                   network:
                     description: |-
                       Network specifies an existing VPC where the cluster should be created
@@ -5424,7 +5898,6 @@ spec:
                           - IAM
                           - ServiceUsage
                           - Storage
-                          - TagManager
                           type: string
                         url:
                           description: |-
@@ -6792,15 +7265,15 @@ spec:
                       instance during cluster creation.
                     type: string
                   tgName:
-                    description: TGName is the name of a pre-created TransitGateway
+                    description: tgName is the name or id of a pre-created TransitGateway
                       inside IBM Cloud.
                     type: string
                   userID:
                     description: UserID is the login for the user's IBM Cloud account.
                     type: string
                   vpcName:
-                    description: VPCName is the name of a pre-created VPC inside IBM
-                      Cloud.
+                    description: vpcName is the name or id of a pre-created VPC inside
+                      IBM Cloud.
                     type: string
                   vpcRegion:
                     description: |-
@@ -7380,11 +7853,13 @@ spec:
             default: External
             description: |-
               Publish controls how the user facing endpoints of the cluster like the Kubernetes API, OpenShift routes etc. are exposed.
+              A "Mixed" strategy only applies to the "azure" platform, and requires "operatorPublishingStrategy" to be configured.
               When no strategy is specified, the strategy is "External".
             enum:
             - ""
             - External
             - Internal
+            - Mixed
             type: string
           pullSecret:
             description: PullSecret is the secret to use when pulling images.

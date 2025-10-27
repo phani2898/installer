@@ -60,11 +60,11 @@ func TestGenerateInfrastructure(t *testing.T) {
 		name: "gcp service endpoints",
 		installConfig: icBuild.build(
 			icBuild.forGCP(),
-			icBuild.withGCPServiceEndpoint(configv1.GCPServiceEndpointNameCompute, "https://googleapis.com/compute/v1/"),
+			icBuild.withGCPServiceEndpoint(configv1.GCPServiceEndpointNameCompute, "https://compute-endpoint.p.googleapis.com"),
 		),
 		expectedInfrastructure: infraBuild.build(
 			infraBuild.forPlatform(configv1.GCPPlatformType),
-			infraBuild.withGCPServiceEndpoint(configv1.GCPServiceEndpointNameCompute, "https://googleapis.com/compute/v1/"),
+			infraBuild.withGCPServiceEndpoint(configv1.GCPServiceEndpointNameCompute, "https://compute-endpoint.p.googleapis.com"),
 		),
 		expectedFilesGenerated: 2,
 	}, {
@@ -97,31 +97,50 @@ func TestGenerateInfrastructure(t *testing.T) {
 			infraBuild.withGCPClusterHostedDNS("Enabled"),
 		),
 		expectedFilesGenerated: 2,
+	}, {
+		name:          "default AWS custom DNS",
+		installConfig: icBuild.build(icBuild.forAWS()),
+		expectedInfrastructure: infraBuild.build(
+			infraBuild.forPlatform(configv1.AWSPlatformType),
+			infraBuild.withAWSClusterHostedDNS("Disabled"),
+			infraBuild.withAWSPlatformSpec(),
+			infraBuild.withAWSPlatformStatus(),
+		),
+		expectedFilesGenerated: 1,
+	}, {
+		name: "AWS custom DNS",
+		installConfig: icBuild.build(
+			icBuild.forAWS(),
+			icBuild.withAWSUserProvisionedDNS("Enabled"),
+		),
+		expectedInfrastructure: infraBuild.build(
+			infraBuild.forPlatform(configv1.AWSPlatformType),
+			infraBuild.withAWSClusterHostedDNS("Enabled"),
+			infraBuild.withAWSPlatformSpec(),
+			infraBuild.withAWSPlatformStatus(),
+		),
+		expectedFilesGenerated: 1,
+	}, {
+		name:          "default Azure custom DNS",
+		installConfig: icBuild.build(icBuild.forAzure()),
+		expectedInfrastructure: infraBuild.build(
+			infraBuild.forPlatform(configv1.AzurePlatformType),
+			infraBuild.withAzureClusterHostedDNS("Disabled"),
+		),
+		expectedFilesGenerated: 1,
+	}, {
+		name: "Azure custom DNS",
+		installConfig: icBuild.build(
+			icBuild.forAzure(),
+			icBuild.withAzureUserProvisionedDNS("Enabled"),
+		),
+		expectedInfrastructure: infraBuild.build(
+			infraBuild.forPlatform(configv1.AzurePlatformType),
+			infraBuild.withAzureClusterHostedDNS("Enabled"),
+		),
+		expectedFilesGenerated: 1,
 	},
 		{
-			name:          "default AWS custom DNS",
-			installConfig: icBuild.build(icBuild.forAWS()),
-			expectedInfrastructure: infraBuild.build(
-				infraBuild.forPlatform(configv1.AWSPlatformType),
-				infraBuild.withAWSClusterHostedDNS("Disabled"),
-				infraBuild.withAWSPlatformSpec(),
-				infraBuild.withAWSPlatformStatus(),
-			),
-			expectedFilesGenerated: 1,
-		}, {
-			name: "AWS custom DNS",
-			installConfig: icBuild.build(
-				icBuild.forAWS(),
-				icBuild.withAWSUserProvisionedDNS("Enabled"),
-			),
-			expectedInfrastructure: infraBuild.build(
-				infraBuild.forPlatform(configv1.AWSPlatformType),
-				infraBuild.withAWSClusterHostedDNS("Enabled"),
-				infraBuild.withAWSPlatformSpec(),
-				infraBuild.withAWSPlatformStatus(),
-			),
-			expectedFilesGenerated: 1,
-		}, {
 			name: "vsphere with VIPs appended to machine networks",
 			installConfig: icBuild.build(
 				icBuild.forVSphere(),
@@ -136,6 +155,7 @@ func TestGenerateInfrastructure(t *testing.T) {
 				infraBuild.withVSphereMachineNetworkEntry(configv1.CIDR(ipv4IngressVIP+"/32")),
 				infraBuild.withVSphereAPIVIP(ipv4APIVIP),
 				infraBuild.withVSphereIngressVIP(ipv4IngressVIP),
+				infraBuild.withVSphereNodeNetworkingEntry(configv1.CIDR(defaultMachineNetwork)),
 			),
 			expectedFilesGenerated: 1,
 		}, {
@@ -161,6 +181,47 @@ func TestGenerateInfrastructure(t *testing.T) {
 				infraBuild.withVSphereIngressVIP(ipv4IngressVIP),
 				infraBuild.withVSphereAPIVIP(ipv6APIVIP),
 				infraBuild.withVSphereIngressVIP(ipv6IngressVIP),
+				infraBuild.withVSphereNodeNetworkingEntry(configv1.CIDR(defaultMachineNetwork)),
+				infraBuild.withVSphereNodeNetworkingEntry(configv1.CIDR(ipv6MachineNetwork)),
+			),
+			expectedFilesGenerated: 1,
+		},
+		{
+			name: "vsphere with VIPS already populated in machine network",
+			installConfig: icBuild.build(
+				icBuild.forVSphere(),
+				icBuild.withMachineNetwork(defaultMachineNetwork),
+				icBuild.withMachineNetwork(ipv4APIVIP+"/32"),
+				icBuild.withVSphereAPIVIP(ipv4APIVIP),
+				icBuild.withVSphereIngressVIP(ipv4IngressVIP),
+			),
+			expectedInfrastructure: infraBuild.build(
+				infraBuild.forPlatform(configv1.VSpherePlatformType),
+				infraBuild.withVSphereMachineNetworkEntry(configv1.CIDR(defaultMachineNetwork)),
+				infraBuild.withVSphereMachineNetworkEntry(configv1.CIDR(ipv4APIVIP+"/32")),
+				infraBuild.withVSphereMachineNetworkEntry(configv1.CIDR(ipv4IngressVIP+"/32")),
+				infraBuild.withVSphereAPIVIP(ipv4APIVIP),
+				infraBuild.withVSphereIngressVIP(ipv4IngressVIP),
+				infraBuild.withVSphereNodeNetworkingEntry(configv1.CIDR(defaultMachineNetwork)),
+				infraBuild.withVSphereNodeNetworkingEntry(configv1.CIDR(ipv4APIVIP+"/32")),
+			),
+			expectedFilesGenerated: 1,
+		},
+		{
+			name: "vsphere with same API & Ingress VIPS",
+			installConfig: icBuild.build(
+				icBuild.forVSphere(),
+				icBuild.withMachineNetwork(defaultMachineNetwork),
+				icBuild.withVSphereAPIVIP(ipv4APIVIP),
+				icBuild.withVSphereIngressVIP(ipv4APIVIP),
+			),
+			expectedInfrastructure: infraBuild.build(
+				infraBuild.forPlatform(configv1.VSpherePlatformType),
+				infraBuild.withVSphereMachineNetworkEntry(configv1.CIDR(defaultMachineNetwork)),
+				infraBuild.withVSphereMachineNetworkEntry(configv1.CIDR(ipv4APIVIP+"/32")),
+				infraBuild.withVSphereAPIVIP(ipv4APIVIP),
+				infraBuild.withVSphereIngressVIP(ipv4APIVIP),
+				infraBuild.withVSphereNodeNetworkingEntry(configv1.CIDR(defaultMachineNetwork)),
 			),
 			expectedFilesGenerated: 1,
 		},
@@ -232,6 +293,15 @@ func (b icBuildNamespace) forGCP() icOption {
 			return
 		}
 		ic.Platform.GCP = &gcptypes.Platform{}
+	}
+}
+
+func (b icBuildNamespace) forAzure() icOption {
+	return func(ic *types.InstallConfig) {
+		if ic.Platform.Azure != nil {
+			return
+		}
+		ic.Platform.Azure = &azuretypes.Platform{}
 	}
 }
 
@@ -338,6 +408,23 @@ func (b icBuildNamespace) withVSphereIngressVIP(vip string) icOption {
 	}
 }
 
+func (b icBuildNamespace) withResourceTags(tags map[string]string) icOption {
+	return func(ic *types.InstallConfig) {
+		b.forAzure()(ic)
+		ic.Platform.Azure.UserTags = tags
+	}
+}
+
+func (b icBuildNamespace) withAzureUserProvisionedDNS(enabled string) icOption {
+	return func(ic *types.InstallConfig) {
+		b.forAzure()(ic)
+		if enabled == "Enabled" {
+			ic.Platform.Azure.UserProvisionedDNS = dns.UserProvisionedDNSEnabled
+			ic.FeatureGates = []string{"AzureClusterHostedDNSInstall=true"}
+		}
+	}
+}
+
 type infraOption func(*configv1.Infrastructure)
 
 type infraBuildNamespace struct{}
@@ -421,15 +508,6 @@ func (b infraBuildNamespace) withGCPServiceEndpoint(name configv1.GCPServiceEndp
 	}
 }
 
-func (b icBuildNamespace) forAzure() icOption {
-	return func(ic *types.InstallConfig) {
-		if ic.Platform.Azure != nil {
-			return
-		}
-		ic.Platform.Azure = &azuretypes.Platform{}
-	}
-}
-
 func (b infraBuildNamespace) withAzurePlatformStatus() infraOption {
 	return func(infra *configv1.Infrastructure) {
 		if infra.Status.PlatformStatus.Azure != nil {
@@ -438,14 +516,10 @@ func (b infraBuildNamespace) withAzurePlatformStatus() infraOption {
 		infra.Status.PlatformStatus.Azure = &configv1.AzurePlatformStatus{
 			ResourceGroupName:        infra.Status.InfrastructureName + "-rg",
 			NetworkResourceGroupName: infra.Status.InfrastructureName + "-rg",
+			CloudLoadBalancerConfig: &configv1.CloudLoadBalancerConfig{
+				DNSType: configv1.PlatformDefaultDNSType,
+			},
 		}
-	}
-}
-
-func (b icBuildNamespace) withResourceTags(tags map[string]string) icOption {
-	return func(ic *types.InstallConfig) {
-		b.forAzure()(ic)
-		ic.Platform.Azure.UserTags = tags
 	}
 }
 
@@ -488,6 +562,18 @@ func (b infraBuildNamespace) withAWSClusterHostedDNS(enabled string) infraOption
 	}
 }
 
+func (b infraBuildNamespace) withAzureClusterHostedDNS(enabled string) infraOption {
+	return func(infra *configv1.Infrastructure) {
+		b.withAzurePlatformStatus()(infra)
+		infra.Status.PlatformStatus.Azure.CloudLoadBalancerConfig = &configv1.CloudLoadBalancerConfig{
+			DNSType: configv1.PlatformDefaultDNSType,
+		}
+		if enabled == "Enabled" {
+			infra.Status.PlatformStatus.Azure.CloudLoadBalancerConfig.DNSType = configv1.ClusterHostedDNSType
+		}
+	}
+}
+
 func (b infraBuildNamespace) withVSpherePlatformSpec() infraOption {
 	return func(infra *configv1.Infrastructure) {
 		if infra.Spec.PlatformSpec.VSphere != nil {
@@ -512,6 +598,15 @@ func (b infraBuildNamespace) withVSphereMachineNetworkEntry(cidr configv1.CIDR) 
 		b.withVSpherePlatformStatus()(infra)
 		infra.Spec.PlatformSpec.VSphere.MachineNetworks = append(infra.Spec.PlatformSpec.VSphere.MachineNetworks, cidr)
 		infra.Status.PlatformStatus.VSphere.MachineNetworks = append(infra.Status.PlatformStatus.VSphere.MachineNetworks, cidr)
+	}
+}
+
+func (b infraBuildNamespace) withVSphereNodeNetworkingEntry(cidr configv1.CIDR) infraOption {
+	return func(infra *configv1.Infrastructure) {
+		b.withVSpherePlatformSpec()(infra)
+		b.withVSpherePlatformStatus()(infra)
+		infra.Spec.PlatformSpec.VSphere.NodeNetworking.External.NetworkSubnetCIDR = append(infra.Spec.PlatformSpec.VSphere.NodeNetworking.External.NetworkSubnetCIDR, string(cidr))
+		infra.Spec.PlatformSpec.VSphere.NodeNetworking.Internal.NetworkSubnetCIDR = append(infra.Spec.PlatformSpec.VSphere.NodeNetworking.Internal.NetworkSubnetCIDR, string(cidr))
 	}
 }
 

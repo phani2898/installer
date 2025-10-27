@@ -240,7 +240,7 @@ func (t *TerraformVariables) Generate(ctx context.Context, parents asset.Parents
 				publicSubnets = append(publicSubnets, id)
 			}
 
-			vpc, err = installConfig.AWS.VPC(ctx)
+			vpc, err = installConfig.AWS.VPCID(ctx)
 			if err != nil {
 				return err
 			}
@@ -452,7 +452,7 @@ func (t *TerraformVariables) Generate(ctx context.Context, parents asset.Parents
 			ServiceAccount:   string(sess.Credentials.JSON),
 		}
 
-		client, err := gcpconfig.NewClient(context.Background())
+		client, err := gcpconfig.NewClient(context.Background(), installConfig.Config.GCP.ServiceEndpoints)
 		if err != nil {
 			return err
 		}
@@ -517,16 +517,22 @@ func (t *TerraformVariables) Generate(ctx context.Context, parents asset.Parents
 			}
 
 			// Set the private zone
-			privateZoneName, err = manifests.GetGCPPrivateZoneName(ctx, client, installConfig, clusterID.InfraID)
+			params, err := manifests.GetGCPPrivateZoneInfo(ctx, client, installConfig, clusterID.InfraID)
 			if err != nil {
 				return fmt.Errorf("failed to find gcp private dns zone: %w", err)
 			}
+			privateZoneName = params.Name
 		}
 
 		ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 		defer cancel()
 
-		url, err := gcpbootstrap.CreateSignedURL(clusterID.InfraID)
+		storageClient, err := gcpconfig.GetStorageService(ctx, installConfig.Config.GCP.ServiceEndpoints)
+		if err != nil {
+			return fmt.Errorf("failed to create storage client: %w", err)
+		}
+
+		url, err := gcpbootstrap.CreateSignedURL(storageClient, clusterID.InfraID)
 		if err != nil {
 			return fmt.Errorf("failed to provision gcp bootstrap storage resources: %w", err)
 		}

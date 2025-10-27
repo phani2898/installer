@@ -20,6 +20,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	configv1 "github.com/openshift/api/config/v1"
+	"github.com/openshift/api/features"
 	machinev1 "github.com/openshift/api/machine/v1"
 	machinev1alpha1 "github.com/openshift/api/machine/v1alpha1"
 	machinev1beta1 "github.com/openshift/api/machine/v1beta1"
@@ -185,6 +186,17 @@ func (m *Master) Generate(ctx context.Context, dependencies asset.Parents) error
 	var ipClaims []ipamv1.IPAddressClaim
 	var ipAddrs []ipamv1.IPAddress
 	var controlPlaneMachineSet *machinev1.ControlPlaneMachineSet
+
+	// Check if SNO topology is supported on this platform
+	if pool.Replicas != nil && *pool.Replicas == 1 {
+		bootstrapInPlace := false
+		if ic.BootstrapInPlace != nil && ic.BootstrapInPlace.InstallationDisk != "" {
+			bootstrapInPlace = true
+		}
+		if !supportedSingleNodePlatform(bootstrapInPlace, ic.Platform.Name()) {
+			return fmt.Errorf("this install method does not support Single Node installation on platform %s", ic.Platform.Name())
+		}
+	}
 	switch ic.Platform.Name() {
 	case awstypes.Name:
 		subnets, err := aws.MachineSubnetsByZones(ctx, installConfig, awstypes.ClusterNodeSubnetRole)
@@ -262,7 +274,7 @@ func (m *Master) Generate(ctx context.Context, dependencies asset.Parents) error
 		mpool.Set(ic.Platform.GCP.DefaultMachinePlatform)
 		mpool.Set(pool.Platform.GCP)
 		if len(mpool.Zones) == 0 {
-			azs, err := gcp.ZonesForInstanceType(ic.Platform.GCP.ProjectID, ic.Platform.GCP.Region, mpool.InstanceType)
+			azs, err := gcp.ZonesForInstanceType(ic.Platform.GCP.ProjectID, ic.Platform.GCP.Region, mpool.InstanceType, ic.Platform.GCP.ServiceEndpoints)
 			if err != nil {
 				return errors.Wrap(err, "failed to fetch availability zones")
 			}
@@ -339,7 +351,7 @@ func (m *Master) Generate(ctx context.Context, dependencies asset.Parents) error
 		}
 		openstack.ConfigMasters(machines, clusterID.InfraID)
 	case azuretypes.Name:
-		mpool := defaultAzureMachinePoolPlatform()
+		mpool := defaultAzureMachinePoolPlatform(installConfig.Config.Platform.Azure.CloudName)
 		mpool.InstanceType = azuredefaults.ControlPlaneInstanceType(
 			installConfig.Config.Platform.Azure.CloudName,
 			installConfig.Config.Platform.Azure.Region,
@@ -594,14 +606,62 @@ func (m *Master) Generate(ctx context.Context, dependencies asset.Parents) error
 	// The maximum number of networks supported on ServiceNetwork is two, one IPv4 and one IPv6 network.
 	// The cluster-network-operator handles the validation of this field.
 	// Reference: https://github.com/openshift/cluster-network-operator/blob/fc3e0e25b4cfa43e14122bdcdd6d7f2585017d75/pkg/network/cluster_config.go#L45-L52
-	if ic.Networking != nil && len(ic.Networking.ServiceNetwork) == 2 &&
-		(ic.Platform.Name() == openstacktypes.Name || ic.Platform.Name() == vspheretypes.Name) {
+	if ic.Networking != nil && len(ic.Networking.ServiceNetwork) == 2 {
 		// Only configure kernel args for dual-stack clusters.
 		ignIPv6, err := machineconfig.ForDualStackAddresses("master")
 		if err != nil {
 			return errors.Wrap(err, "failed to create ignition to configure IPv6 for master machines")
 		}
 		machineConfigs = append(machineConfigs, ignIPv6)
+	}
+
+	if installConfig.Config.EnabledFeatureGates().Enabled(features.FeatureGateMultiDiskSetup) {
+		for i, diskSetup := range installConfig.Config.ControlPlane.DiskSetup {
+			var dataDisk any
+			var diskName string
+
+			switch diskSetup.Type {
+			case types.Etcd:
+				diskName = diskSetup.Etcd.PlatformDiskID
+			case types.Swap:
+				diskName = diskSetup.Etcd.PlatformDiskID
+			case types.UserDefined:
+				diskName = diskSetup.UserDefined.PlatformDiskID
+			default:
+				// We shouldn't get here, but just in case
+				return errors.Errorf("disk setup type %s is not supported", diskSetup.Type)
+			}
+
+			switch ic.Platform.Name() {
+			case azuretypes.Name:
+				azureControlPlaneMachinePool := ic.ControlPlane.Platform.Azure
+
+				if i < len(azureControlPlaneMachinePool.DataDisks) {
+					dataDisk = azureControlPlaneMachinePool.DataDisks[i]
+				}
+			case vspheretypes.Name:
+				vsphereControlPlaneMachinePool := ic.ControlPlane.Platform.VSphere
+				for index, disk := range vsphereControlPlaneMachinePool.DataDisks {
+					if disk.Name == diskName {
+						dataDisk = vsphere.DiskInfo{
+							Index: index,
+							Disk:  disk,
+						}
+						break
+					}
+				}
+			default:
+				return errors.Errorf("disk setup for %s is not supported", ic.Platform.Name())
+			}
+
+			if dataDisk != nil {
+				diskSetupIgn, err := NodeDiskSetup(installConfig, "master", diskSetup, dataDisk)
+				if err != nil {
+					return errors.Wrap(err, "failed to create ignition to setup disks for control plane")
+				}
+				machineConfigs = append(machineConfigs, diskSetupIgn)
+			}
+		}
 	}
 
 	m.MachineConfigFiles, err = machineconfig.Manifests(machineConfigs, "master", directory)
@@ -967,6 +1027,20 @@ func IsFencingCredentialsFile(filepath string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-
 	return match, nil
+}
+
+// supportedSingleNodePlatform indicates if the IPI Installer can be used to install SNO on
+// a platform.
+func supportedSingleNodePlatform(bootstrapInPlace bool, platformName string) bool {
+	switch platformName {
+	case awstypes.Name, gcptypes.Name, azuretypes.Name, powervstypes.Name, nonetypes.Name, ibmcloudtypes.Name:
+		// Single node OpenShift installations supported without `bootstrapInPlace`
+		return true
+	case externaltypes.Name:
+		// Single node OpenShift installations supported with `bootstrapInPlace`
+		return bootstrapInPlace
+	default:
+		return false
+	}
 }

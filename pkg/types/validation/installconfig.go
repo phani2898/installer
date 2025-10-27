@@ -77,8 +77,13 @@ func ValidateInstallConfig(c *types.InstallConfig, usingAgentMethod bool) field.
 	if c.FIPS {
 		allErrs = append(allErrs, validateFIPSconfig(c)...)
 	} else if c.SSHKey != "" {
-		if err := validate.SSHPublicKey(c.SSHKey); err != nil {
-			allErrs = append(allErrs, field.Invalid(field.NewPath("sshKey"), c.SSHKey, err.Error()))
+		sshKeys := strings.Split(c.SSHKey, "\n")
+		for _, sshKey := range sshKeys {
+			if sshKey != "" {
+				if err := validate.SSHPublicKey(sshKey); err != nil {
+					allErrs = append(allErrs, field.Invalid(field.NewPath("sshKey"), sshKey, err.Error()))
+				}
+			}
 		}
 	}
 
@@ -135,8 +140,7 @@ func ValidateInstallConfig(c *types.InstallConfig, usingAgentMethod bool) field.
 			allErrs = append(allErrs, field.Forbidden(field.NewPath("arbiter"), fmt.Sprintf("%s feature must be enabled in order to use arbiter cluster deployment", features.FeatureGateHighlyAvailableArbiter)))
 		}
 	}
-	multiArchEnabled := types.MultiArchFeatureGateEnabled(c.Platform.Name(), c.EnabledFeatureGates())
-	allErrs = append(allErrs, validateCompute(&c.Platform, c.ControlPlane, c.Compute, field.NewPath("compute"), multiArchEnabled)...)
+	allErrs = append(allErrs, validateCompute(&c.Platform, c.ControlPlane, c.Compute, field.NewPath("compute"))...)
 
 	releaseArch, err := version.ReleaseArchitecture()
 	if err != nil {
@@ -359,7 +363,10 @@ func validateNetworkingIPVersion(n *types.Networking, p *types.Platform) field.E
 		case p.Ovirt != nil:
 		case p.Nutanix != nil:
 		case p.None != nil:
+			// DualStack IPv6 Primary is supported both on None and external platforms
+			allowV6Primary = true
 		case p.External != nil:
+			allowV6Primary = true
 		default:
 			allErrs = append(allErrs, field.Invalid(field.NewPath("networking"), "DualStack", "dual-stack IPv4/IPv6 is not supported for this platform, specify only one type of address"))
 		}
@@ -788,8 +795,11 @@ func validateComputeEdge(platform *types.Platform, pName string, fldPath *field.
 	return allErrs
 }
 
-func validateCompute(platform *types.Platform, control *types.MachinePool, pools []types.MachinePool, fldPath *field.Path, isMultiArchEnabled bool) field.ErrorList {
+func validateCompute(platform *types.Platform, control *types.MachinePool, pools []types.MachinePool, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
+	// Multi Arch is enabled by default for AWS and GCP, these are also the only
+	// two valid platforms for multi arch installations.
+	isMultiArchEnabled := platform.AWS != nil || platform.GCP != nil
 	poolNames := map[string]bool{}
 	for i, p := range pools {
 		poolFldPath := fldPath.Index(i)
@@ -977,19 +987,27 @@ func validateAPIAndIngressVIPs(vips vips, fieldNames vipFields, vipIsRequired, r
 			allErrs = append(allErrs, field.Required(fldPath.Child(fieldNames.IngressVIPs), "must specify VIP for ingress, when VIP for API is set"))
 		}
 
-		if len(vips.API) == 1 {
-			hasIPv4, hasIPv6, presence, _ := inferIPVersionFromInstallConfig(n)
+		hasIPv4, hasIPv6, presence, _ := inferIPVersionFromInstallConfig(n)
 
-			apiVIPIPFamily := corev1.IPv4Protocol
-			if utilsnet.IsIPv6String(vips.API[0]) {
-				apiVIPIPFamily = corev1.IPv6Protocol
-			}
+		apiVIPIPFamily := corev1.IPv4Protocol
+		if utilsnet.IsIPv6String(vips.API[0]) {
+			apiVIPIPFamily = corev1.IPv6Protocol
+		}
 
-			if hasIPv4 && hasIPv6 && apiVIPIPFamily != presence["machineNetwork"].Primary {
-				allErrs = append(allErrs, field.Invalid(fldPath.Child(fieldNames.APIVIPs), vips.API[0], "VIP for the API must be of the same IP family with machine network's primary IP Family for dual-stack IPv4/IPv6"))
+		if hasIPv4 && hasIPv6 {
+			for _, k := range sortedPresenceKeys(presence) {
+				v := presence[k]
+				if v.Primary != apiVIPIPFamily {
+					allErrs = append(allErrs, field.Invalid(fldPath.Child(fieldNames.APIVIPs), vips.API[0], fmt.Sprintf("%s primary IP Family and primary IP family for the API VIP should match", k)))
+				}
 			}
-		} else if len(vips.API) == 2 {
-			if isDualStack, _ := utilsnet.IsDualStackIPStrings(vips.API); !isDualStack {
+		}
+
+		if len(vips.API) == 2 {
+			if isDualStack, err := utilsnet.IsDualStackIPStrings(vips.API); !isDualStack {
+				if err != nil {
+					allErrs = append(allErrs, field.Invalid(fldPath, vips, err.Error()))
+				}
 				allErrs = append(allErrs, field.Invalid(fldPath.Child(fieldNames.APIVIPs), vips.API, "If two API VIPs are given, one must be an IPv4 address, the other an IPv6"))
 			}
 		}
@@ -1020,19 +1038,27 @@ func validateAPIAndIngressVIPs(vips vips, fieldNames vipFields, vipIsRequired, r
 			allErrs = append(allErrs, field.Required(fldPath.Child(fieldNames.APIVIPs), "must specify VIP for API, when VIP for ingress is set"))
 		}
 
-		if len(vips.Ingress) == 1 {
-			hasIPv4, hasIPv6, presence, _ := inferIPVersionFromInstallConfig(n)
+		hasIPv4, hasIPv6, presence, _ := inferIPVersionFromInstallConfig(n)
 
-			ingressVIPIPFamily := corev1.IPv4Protocol
-			if utilsnet.IsIPv6String(vips.Ingress[0]) {
-				ingressVIPIPFamily = corev1.IPv6Protocol
-			}
+		ingressVIPIPFamily := corev1.IPv4Protocol
+		if utilsnet.IsIPv6String(vips.Ingress[0]) {
+			ingressVIPIPFamily = corev1.IPv6Protocol
+		}
 
-			if hasIPv4 && hasIPv6 && ingressVIPIPFamily != presence["machineNetwork"].Primary {
-				allErrs = append(allErrs, field.Invalid(fldPath.Child(fieldNames.IngressVIPs), vips.Ingress[0], "VIP for the Ingress must be of the same IP family with machine network's primary IP Family for dual-stack IPv4/IPv6"))
+		if hasIPv4 && hasIPv6 {
+			for _, k := range sortedPresenceKeys(presence) {
+				v := presence[k]
+				if v.Primary != ingressVIPIPFamily {
+					allErrs = append(allErrs, field.Invalid(fldPath.Child(fieldNames.IngressVIPs), vips.Ingress[0], fmt.Sprintf("%s primary IP Family and primary IP family for the Ingress VIP should match", k)))
+				}
 			}
-		} else if len(vips.Ingress) == 2 {
-			if isDualStack, _ := utilsnet.IsDualStackIPStrings(vips.Ingress); !isDualStack {
+		}
+
+		if len(vips.Ingress) == 2 {
+			if isDualStack, err := utilsnet.IsDualStackIPStrings(vips.Ingress); !isDualStack {
+				if err != nil {
+					allErrs = append(allErrs, field.Invalid(fldPath, vips, err.Error()))
+				}
 				allErrs = append(allErrs, field.Invalid(fldPath.Child(fieldNames.IngressVIPs), vips.Ingress, "If two Ingress VIPs are given, one must be an IPv4 address, the other an IPv6"))
 			}
 		}
@@ -1259,12 +1285,13 @@ func validateCloudCredentialsMode(mode types.CredentialsMode, fldPath *field.Pat
 	// validPlatformCredentialsModes is a map from the platform name to a slice of credentials modes that are valid
 	// for the platform. If a platform name is not in the map, then the credentials mode cannot be set for that platform.
 	validPlatformCredentialsModes := map[string][]types.CredentialsMode{
-		aws.Name:      {types.MintCredentialsMode, types.PassthroughCredentialsMode, types.ManualCredentialsMode},
-		azure.Name:    allowedAzureModes,
-		gcp.Name:      {types.MintCredentialsMode, types.PassthroughCredentialsMode, types.ManualCredentialsMode},
-		ibmcloud.Name: {types.ManualCredentialsMode},
-		powervs.Name:  {types.ManualCredentialsMode},
-		nutanix.Name:  {types.ManualCredentialsMode},
+		aws.Name:       {types.MintCredentialsMode, types.PassthroughCredentialsMode, types.ManualCredentialsMode},
+		azure.Name:     allowedAzureModes,
+		gcp.Name:       {types.MintCredentialsMode, types.PassthroughCredentialsMode, types.ManualCredentialsMode},
+		openstack.Name: {types.PassthroughCredentialsMode},
+		ibmcloud.Name:  {types.ManualCredentialsMode},
+		powervs.Name:   {types.ManualCredentialsMode},
+		nutanix.Name:   {types.ManualCredentialsMode},
 	}
 	if validModes, ok := validPlatformCredentialsModes[platform.Name()]; ok {
 		validModesSet := sets.NewString()
@@ -1612,4 +1639,14 @@ func validateFencingForPlatform(config *types.InstallConfig, fldPath *field.Path
 		errs = append(errs, field.Forbidden(fldPath, fmt.Sprintf("fencing is only supported on baremetal, external or none platforms, instead %s platform was found", config.Platform.Name())))
 	}
 	return errs
+}
+
+// sortedPresenceKeys returns map keys in sorted order for consistent error messages.
+func sortedPresenceKeys(presence ipAddressTypeByField) []string {
+	keys := make([]string, 0, len(presence))
+	for k := range presence {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }

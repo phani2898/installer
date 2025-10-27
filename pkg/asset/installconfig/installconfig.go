@@ -134,7 +134,7 @@ func (a *InstallConfig) finishAWS() error {
 		if totalEdgeSubnets == 0 {
 			return nil
 		}
-		if edgePool := defaults.CreateEdgeMachinePoolDefaults(a.Config.Compute, a.Config.Platform.Name(), totalEdgeSubnets); edgePool != nil {
+		if edgePool := defaults.CreateEdgeMachinePoolDefaults(a.Config.Compute, &a.Config.Platform, totalEdgeSubnets); edgePool != nil {
 			a.Config.Compute = append(a.Config.Compute, *edgePool)
 		}
 	}
@@ -190,7 +190,7 @@ func (a *InstallConfig) platformValidation(ctx context.Context) error {
 		return icazure.Validate(client, a.Config)
 	}
 	if a.Config.Platform.GCP != nil {
-		client, err := icgcp.NewClient(ctx)
+		client, err := icgcp.NewClient(ctx, a.Config.GCP.ServiceEndpoints)
 		if err != nil {
 			return err
 		}

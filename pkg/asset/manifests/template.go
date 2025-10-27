@@ -78,7 +78,6 @@ type bootkubeTemplateData struct {
 	EtcdSignerClientCert       string
 	EtcdSignerClientKey        string
 	EtcdSignerKey              string
-	IsFCOS                     bool
 	IsSCOS                     bool
 	IsOKD                      bool
 	McsTLSCert                 string
@@ -104,4 +103,8 @@ type baremetalTemplateData struct {
 type openshiftTemplateData struct {
 	CloudCreds                   cloudCredsSecretData
 	Base64EncodedKubeadminPwHash string
+}
+
+type mcoTemplateData struct {
+	DisableMachinesetBootMgmt bool
 }

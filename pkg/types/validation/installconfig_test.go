@@ -274,7 +274,33 @@ func validDualStackNetworkingConfig() *types.Networking {
 		},
 	}
 }
-
+func InvalidPrimaryV6DualStackNetworkingConfig() *types.Networking {
+	return &types.Networking{
+		NetworkType: "OVNKubernetes",
+		MachineNetwork: []types.MachineNetworkEntry{
+			{
+				CIDR: *ipnet.MustParseCIDR("ffd0::/48"),
+			},
+			{
+				CIDR: *ipnet.MustParseCIDR("10.0.0.0/16"),
+			},
+		},
+		ServiceNetwork: []ipnet.IPNet{
+			*ipnet.MustParseCIDR("172.30.0.0/16"),
+			*ipnet.MustParseCIDR("ffd1::/112"),
+		},
+		ClusterNetwork: []types.ClusterNetworkEntry{
+			{
+				CIDR:       *ipnet.MustParseCIDR("ffd2::/48"),
+				HostPrefix: 64,
+			},
+			{
+				CIDR:       *ipnet.MustParseCIDR("192.168.1.0/24"),
+				HostPrefix: 28,
+			},
+		},
+	}
+}
 func TestValidateInstallConfig(t *testing.T) {
 	cases := []struct {
 		name          string
@@ -1539,7 +1565,7 @@ func TestValidateInstallConfig(t *testing.T) {
 			name: "invalid dual-stack configuration, IPv6-primary",
 			installConfig: func() *types.InstallConfig {
 				c := validInstallConfig()
-				c.Platform = types.Platform{None: &none.Platform{}}
+				c.Platform = types.Platform{GCP: &gcp.Platform{}}
 				c.Networking = validDualStackNetworkingConfig()
 				c.Networking.ServiceNetwork = []ipnet.IPNet{
 					c.Networking.ServiceNetwork[1],
@@ -1811,7 +1837,7 @@ func TestValidateInstallConfig(t *testing.T) {
 			}(),
 			expectedError: `additionalEnabledCapabilities: Invalid value: \[\]v1.ClusterVersionCapability{"marketplace"}: platform baremetal requires the baremetal capability`,
 		},
-		//VIP tests
+		// VIP tests
 		{
 			name: "apivip_v4_not_in_machinenetwork_cidr",
 			installConfig: func() *types.InstallConfig {
@@ -2212,7 +2238,20 @@ func TestValidateInstallConfig(t *testing.T) {
 				c.Platform.BareMetal.APIVIPs = []string{"ffd0::"}
 				return c
 			}(),
-			expectedError: `platform.baremetal.apiVIPs: Invalid value: "ffd0::": VIP for the API must be of the same IP family with machine network's primary IP Family for dual-stack IPv4/IPv6`,
+			expectedError: `[platform.baremetal.apiVIPs: Invalid value: "ffd0::": clusterNetwork primary IP Family and primary IP family for the API VIP should match, platform.baremetal.apiVIPs: Invalid value: "ffd0::": machineNetwork primary IP Family and primary IP family for the API VIP should match, platform.baremetal.apiVIPs: Invalid value: "ffd0::": serviceNetwork primary IP Family and primary IP family for the API VIP should match]`,
+		},
+		{
+			name: "baremetal API VIP set to an incorrect IP Family with invalid primary IPv6 network",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Networking = InvalidPrimaryV6DualStackNetworkingConfig()
+				c.Platform = types.Platform{
+					BareMetal: validBareMetalPlatform(),
+				}
+				c.Platform.BareMetal.APIVIPs = []string{"ffd0::"}
+				return c
+			}(),
+			expectedError: `platform.baremetal.apiVIPs: Invalid value: "ffd0::": serviceNetwork primary IP Family and primary IP family for the API VIP should match`,
 		},
 		{
 			name: "baremetal Ingress VIP set to an incorrect IP Family",
@@ -2225,7 +2264,20 @@ func TestValidateInstallConfig(t *testing.T) {
 				c.Platform.BareMetal.IngressVIPs = []string{"ffd0::"}
 				return c
 			}(),
-			expectedError: `platform.baremetal.ingressVIPs: Invalid value: "ffd0::": VIP for the Ingress must be of the same IP family with machine network's primary IP Family for dual-stack IPv4/IPv6`,
+			expectedError: `[platform.baremetal.ingressVIPs: Invalid value: "ffd0::": clusterNetwork primary IP Family and primary IP family for the Ingress VIP should match, platform.baremetal.ingressVIPs: Invalid value: "ffd0::": machineNetwork primary IP Family and primary IP family for the Ingress VIP should match, platform.baremetal.ingressVIPs: Invalid value: "ffd0::": serviceNetwork primary IP Family and primary IP family for the Ingress VIP should match]`,
+		},
+		{
+			name: "baremetal Ingress VIP set to an incorrect IP Family with invalid primary IPv6 network",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Networking = InvalidPrimaryV6DualStackNetworkingConfig()
+				c.Platform = types.Platform{
+					BareMetal: validBareMetalPlatform(),
+				}
+				c.Platform.BareMetal.IngressVIPs = []string{"ffd0::"}
+				return c
+			}(),
+			expectedError: `platform.baremetal.ingressVIPs: Invalid value: "ffd0::": serviceNetwork primary IP Family and primary IP family for the Ingress VIP should match`,
 		},
 		{
 			name: "should validate vips on baremetal (required)",
@@ -2993,7 +3045,7 @@ func TestValidateTNF(t *testing.T) {
 			// Build default wrapping installConfig
 			var err error
 			if tc.checkCompute {
-				err = validateCompute(&tc.config.Platform, tc.config.ControlPlane, tc.config.Compute, field.NewPath("compute"), false).ToAggregate()
+				err = validateCompute(&tc.config.Platform, tc.config.ControlPlane, tc.config.Compute, field.NewPath("compute")).ToAggregate()
 			} else {
 				err = validateFencingCredentials(tc.config).ToAggregate()
 			}

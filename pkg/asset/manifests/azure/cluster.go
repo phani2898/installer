@@ -83,10 +83,13 @@ func GenerateClusterAssets(installConfig *installconfig.InstallConfig, clusterID
 	// CAPZ enables NAT Gateways by default, so we are using this hack to disable
 	// nat gateways when we prefer to use load balancers for node egress.
 	nodeSubnetID := ""
-	if installConfig.Config.Platform.Azure.OutboundType != azure.NatGatewayOutboundType {
-		// Because the node subnet does not already exist, we are using an arbitrary value.
-		// We could populate this with the proper subnet ID in the case of BYO VNET, but
-		// the value currently has no practical effect.
+	switch installConfig.Config.Platform.Azure.OutboundType {
+	// Because the node subnet does not already exist, we are using an arbitrary value.
+	// We could populate this with the proper subnet ID in the case of BYO VNET, but
+	// the value currently has no practical effect.
+	case azure.LoadbalancerOutboundType:
+		fallthrough
+	case azure.UserDefinedRoutingOutboundType:
 		nodeSubnetID = "UNKNOWN"
 	}
 
@@ -104,6 +107,7 @@ func GenerateClusterAssets(installConfig *installconfig.InstallConfig, clusterID
 		Name:             clusterID.InfraID,
 		FrontendIPsCount: to.Ptr(int32(1)),
 	}
+
 	if installConfig.Config.Platform.Azure.OutboundType == azure.UserDefinedRoutingOutboundType {
 		controlPlaneOutboundLB = nil
 	}
@@ -175,6 +179,24 @@ func GenerateClusterAssets(installConfig *installconfig.InstallConfig, clusterID
 
 	azEnv := string(installConfig.Azure.CloudName)
 
+	computeSubnetSpec := capz.SubnetSpec{
+		ID: nodeSubnetID,
+		SubnetClassSpec: capz.SubnetClassSpec{
+			Name: computeSubnet,
+			Role: capz.SubnetNode,
+			CIDRBlocks: []string{
+				subnets[1].String(),
+			},
+		},
+		SecurityGroup: securityGroup,
+	}
+
+	if installConfig.Config.Azure.OutboundType == azure.NATGatewaySingleZoneOutboundType {
+		computeSubnetSpec.NatGateway = capz.NatGateway{
+			NatGatewayClassSpec: capz.NatGatewayClassSpec{Name: fmt.Sprintf("%s-natgw", clusterID.InfraID)},
+		}
+	}
+
 	azureCluster := &capz.AzureCluster{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      clusterID.InfraID,
@@ -212,7 +234,7 @@ func GenerateClusterAssets(installConfig *installconfig.InstallConfig, clusterID
 						},
 					},
 				},
-				APIServerLB:            apiServerLB,
+				APIServerLB:            &apiServerLB,
 				ControlPlaneOutboundLB: controlPlaneOutboundLB,
 				Subnets: capz.Subnets{
 					{
@@ -225,17 +247,7 @@ func GenerateClusterAssets(installConfig *installconfig.InstallConfig, clusterID
 						},
 						SecurityGroup: securityGroup,
 					},
-					{
-						ID: nodeSubnetID,
-						SubnetClassSpec: capz.SubnetClassSpec{
-							Name: computeSubnet,
-							Role: capz.SubnetNode,
-							CIDRBlocks: []string{
-								subnets[1].String(),
-							},
-						},
-						SecurityGroup: securityGroup,
-					},
+					computeSubnetSpec,
 				},
 			},
 		},
@@ -263,41 +275,47 @@ func GenerateClusterAssets(installConfig *installconfig.InstallConfig, clusterID
 		File:   asset.File{Filename: "02_azure-cluster.yaml"},
 	})
 
-	azureClientSecret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      clusterID.InfraID + "-azure-client-secret",
-			Namespace: capiutils.Namespace,
-		},
-		StringData: map[string]string{
-			"clientSecret": session.Credentials.ClientSecret,
-		},
-	}
-	azureClientSecret.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Secret"))
-	manifests = append(manifests, &asset.RuntimeFile{
-		Object: azureClientSecret,
-		File:   asset.File{Filename: "01_azure-client-secret.yaml"},
-	})
-
 	id := &capz.AzureClusterIdentity{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      clusterID.InfraID,
 			Namespace: capiutils.Namespace,
 		},
 		Spec: capz.AzureClusterIdentitySpec{
-			Type:              capz.ServicePrincipal,
 			AllowedNamespaces: &capz.AllowedNamespaces{}, // Allow all namespaces.
 			ClientID:          session.Credentials.ClientID,
-			ClientSecret: corev1.SecretReference{
-				Name:      azureClientSecret.Name,
-				Namespace: azureClientSecret.Namespace,
-			},
-			TenantID: session.Credentials.TenantID,
+			TenantID:          session.Credentials.TenantID,
 		},
 	}
-	if session.AuthType == azic.ManagedIdentityAuth {
+
+	switch session.AuthType {
+	case azic.ManagedIdentityAuth:
 		id.Spec.Type = capz.UserAssignedMSI
-		id.Spec.ClientSecret = corev1.SecretReference{}
+	case azic.ClientSecretAuth:
+		id.Spec.Type = capz.ServicePrincipal
+		azureClientSecret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      clusterID.InfraID + "-azure-client-secret",
+				Namespace: capiutils.Namespace,
+			},
+			StringData: map[string]string{
+				"clientSecret": session.Credentials.ClientSecret,
+			},
+		}
+		azureClientSecret.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Secret"))
+		manifests = append(manifests, &asset.RuntimeFile{
+			Object: azureClientSecret,
+			File:   asset.File{Filename: "01_azure-client-secret.yaml"},
+		})
+
+		id.Spec.ClientSecret = corev1.SecretReference{
+			Name:      azureClientSecret.Name,
+			Namespace: azureClientSecret.Namespace,
+		}
+	case azic.ClientCertificateAuth:
+		id.Spec.Type = capz.ServicePrincipalCertificate
+		id.Spec.CertPath = session.Credentials.ClientCertificatePath
 	}
+
 	id.SetGroupVersionKind(capz.GroupVersion.WithKind("AzureClusterIdentity"))
 	manifests = append(manifests, &asset.RuntimeFile{
 		Object: id,

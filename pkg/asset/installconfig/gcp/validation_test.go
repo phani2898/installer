@@ -26,6 +26,7 @@ import (
 	"github.com/openshift/installer/pkg/asset/installconfig/gcp/mock"
 	"github.com/openshift/installer/pkg/ipnet"
 	"github.com/openshift/installer/pkg/types"
+	customDNS "github.com/openshift/installer/pkg/types/dns"
 	"github.com/openshift/installer/pkg/types/gcp"
 )
 
@@ -46,6 +47,7 @@ var (
 	validPublicZone           = "valid-short-public-zone"
 	invalidPublicZone         = "invalid-short-public-zone"
 	validBaseDomain           = "example.installer.domain."
+	invalidBaseDomain         = "invalid.installer.domain."
 	validXpnSA                = "valid-example-sa@gcloud.serviceaccount.com"
 	invalidXpnSA              = "invalid-example-sa@gcloud.serviceaccount.com"
 	validServiceEndpointURL   = "https://computeexample.googleapis.com/compute/v1/"
@@ -114,8 +116,11 @@ var (
 	validNetworkProject      = func(ic *types.InstallConfig) { ic.GCP.NetworkProjectID = validProjectName }
 	validateXpnSA            = func(ic *types.InstallConfig) { ic.ControlPlane.Platform.GCP.ServiceAccount = validXpnSA }
 	invalidateXpnSA          = func(ic *types.InstallConfig) { ic.ControlPlane.Platform.GCP.ServiceAccount = invalidXpnSA }
+	invalidateBaseDomain     = func(ic *types.InstallConfig) { ic.BaseDomain = invalidBaseDomain }
+	enableCustomDNS          = func(ic *types.InstallConfig) { ic.GCP.UserProvisionedDNS = customDNS.UserProvisionedDNSEnabled }
 
 	validServiceEndpoint = func(ic *types.InstallConfig) {
+		ic.Publish = types.InternalPublishingStrategy
 		ic.GCP.ServiceEndpoints = append(ic.GCP.ServiceEndpoints,
 			configv1.GCPServiceEndpoint{
 				Name: configv1.GCPServiceEndpointNameCompute,
@@ -125,6 +130,7 @@ var (
 	}
 
 	invalidServiceEndpointBadFormat = func(ic *types.InstallConfig) {
+		ic.Publish = types.InternalPublishingStrategy
 		ic.GCP.ServiceEndpoints = append(ic.GCP.ServiceEndpoints,
 			configv1.GCPServiceEndpoint{
 				Name: configv1.GCPServiceEndpointNameStorage,
@@ -257,190 +263,235 @@ func TestGCPInstallConfigValidation(t *testing.T) {
 	cases := []struct {
 		name           string
 		edits          editFunctions
+		records        []*dns.ResourceRecordSet
 		expectedError  bool
 		expectedErrMsg string
 	}{
 		{
 			name:           "Valid network & subnets",
 			edits:          editFunctions{},
+			records:        []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.example.installer.domain."}},
 			expectedError:  false,
 			expectedErrMsg: "",
 		},
 		{
 			name:           "Invalid ClusterName",
 			edits:          editFunctions{invalidClusterName},
+			records:        []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.example.installer.domain."}},
 			expectedError:  true,
 			expectedErrMsg: `clusterName: Invalid value: "testgoogletest": cluster name must not start with "goog" or contain variations of "google"`,
 		},
 		{
 			name:           "Valid install config without network & subnets",
 			edits:          editFunctions{removeVPC, removeSubnets},
+			records:        []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.example.installer.domain."}},
 			expectedError:  false,
 			expectedErrMsg: "",
 		},
 		{
 			name:           "Invalid subnet range",
 			edits:          editFunctions{invalidateMachineCIDR},
+			records:        []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.example.installer.domain."}},
 			expectedError:  true,
 			expectedErrMsg: "computeSubnet: Invalid value.*subnet CIDR range start 10.0.0.0 is outside of the specified machine networks",
 		},
 		{
 			name:           "Invalid network",
 			edits:          editFunctions{invalidateNetwork},
+			records:        []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.example.installer.domain."}},
 			expectedError:  true,
 			expectedErrMsg: "network: Invalid value",
 		},
 		{
 			name:           "Invalid compute subnet",
 			edits:          editFunctions{invalidateComputeSubnet},
+			records:        []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.example.installer.domain."}},
 			expectedError:  true,
 			expectedErrMsg: "computeSubnet: Invalid value",
 		},
 		{
 			name:           "Invalid control plane subnet",
 			edits:          editFunctions{invalidateCPSubnet},
+			records:        []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.example.installer.domain."}},
 			expectedError:  true,
 			expectedErrMsg: "controlPlaneSubnet: Invalid value",
 		},
 		{
 			name:           "Invalid both subnets",
 			edits:          editFunctions{invalidateCPSubnet, invalidateComputeSubnet},
+			records:        []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.example.installer.domain."}},
 			expectedError:  true,
 			expectedErrMsg: "computeSubnet: Invalid value.*controlPlaneSubnet: Invalid value",
 		},
 		{
 			name:           "Valid machine types",
 			edits:          editFunctions{validMachineTypes},
+			records:        []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.example.installer.domain."}},
 			expectedError:  false,
 			expectedErrMsg: "",
 		},
 		{
 			name:           "Invalid default machine type",
 			edits:          editFunctions{invalidateDefaultMachineTypes},
+			records:        []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.example.installer.domain."}},
 			expectedError:  true,
 			expectedErrMsg: `\[platform.gcp.defaultMachinePlatform.type: Invalid value: "n1-standard-1": instance type does not meet minimum resource requirements of 4 vCPUs, platform.gcp.defaultMachinePlatform.type: Invalid value: "n1-standard-1": instance type does not meet minimum resource requirements of 15360 MB Memory, controlPlane.platform.gcp.type: Invalid value: "n1-standard-1": instance type does not meet minimum resource requirements of 4 vCPUs, controlPlane.platform.gcp.type: Invalid value: "n1-standard-1": instance type does not meet minimum resource requirements of 15360 MB Memory, compute\[0\].platform.gcp.type: Invalid value: "n1-standard-1": instance type does not meet minimum resource requirements of 2 vCPUs, compute\[0\].platform.gcp.type: Invalid value: "n1-standard-1": instance type does not meet minimum resource requirements of 7680 MB Memory\]`,
 		},
 		{
 			name:           "Invalid control plane machine disk types",
 			edits:          editFunctions{validMachineTypes, invalidateControlPlaneDiskTypes},
+			records:        []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.example.installer.domain."}},
 			expectedError:  true,
 			expectedErrMsg: `controlPlane.type: Unsupported value: "pd-standard": supported values: "hyperdisk-balanced", "pd-balanced", "pd-ssd"`,
 		},
 		{
 			name:           "Invalid control plane machine types",
 			edits:          editFunctions{invalidateControlPlaneMachineTypes},
+			records:        []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.example.installer.domain."}},
 			expectedError:  true,
 			expectedErrMsg: `[controlPlane.platform.gcp.type: Invalid value: "n1\-standard\-1": instance type does not meet minimum resource requirements of 4 vCPUs, controlPlane.platform.gcp.type: Invalid value: "n1\-standard\-1": instance type does not meet minimum resource requirements of 15361 MB Memory]`,
 		},
 		{
 			name:           "Invalid compute machine types",
 			edits:          editFunctions{invalidateComputeMachineTypes},
+			records:        []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.example.installer.domain."}},
 			expectedError:  true,
 			expectedErrMsg: `\[compute\[0\].platform.gcp.type: Invalid value: "n1-standard-1": instance type does not meet minimum resource requirements of 2 vCPUs, compute\[0\].platform.gcp.type: Invalid value: "n1-standard-1": instance type does not meet minimum resource requirements of 7680 MB Memory\]`,
 		},
 		{
 			name:           "Undefined default machine types",
 			edits:          editFunctions{undefinedDefaultMachineTypes},
+			records:        []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.example.installer.domain."}},
 			expectedError:  true,
 			expectedErrMsg: `Internal error: 404`,
 		},
 		{
 			name:           "Invalid region",
 			edits:          editFunctions{invalidateRegion},
+			records:        []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.example.installer.domain."}},
 			expectedError:  true,
 			expectedErrMsg: "could not find subnet valid-compute-subnet in network valid-vpc and region us-east4",
 		},
 		{
 			name:           "Invalid project",
 			edits:          editFunctions{invalidateProject},
+			records:        []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.example.installer.domain."}},
 			expectedError:  true,
 			expectedErrMsg: "network: Invalid value",
 		},
 		{
 			name:           "Invalid project & region",
 			edits:          editFunctions{invalidateRegion, invalidateProject},
+			records:        []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.example.installer.domain."}},
 			expectedError:  true,
 			expectedErrMsg: "network: Invalid value",
 		},
 		{
 			name:           "Invalid project ID",
 			edits:          editFunctions{invalidateProject, removeSubnets, removeVPC},
+			records:        []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.example.installer.domain."}},
 			expectedError:  true,
 			expectedErrMsg: "platform.gcp.project: Invalid value: \"invalid-project\": invalid project ID",
 		},
 		{
 			name:           "Invalid network project ID",
 			edits:          editFunctions{invalidateNetworkProject},
+			records:        []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.example.installer.domain."}},
 			expectedError:  true,
 			expectedErrMsg: "platform.gcp.networkProjectID: Invalid value: \"invalid-project\": invalid project ID",
 		},
 		{
 			name:           "Valid Region",
 			edits:          editFunctions{},
+			records:        []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.example.installer.domain."}},
 			expectedError:  false,
 			expectedErrMsg: "",
 		},
 		{
 			name:           "Invalid region not found",
 			edits:          editFunctions{invalidateRegion, invalidateProject},
+			records:        []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.example.installer.domain."}},
 			expectedError:  true,
 			expectedErrMsg: "platform.gcp.project: Invalid value: \"invalid-project\": invalid project ID",
 		},
 		{
 			name:           "Region not validated",
 			edits:          editFunctions{invalidateRegion},
+			records:        []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.example.installer.domain."}},
 			expectedError:  true,
 			expectedErrMsg: "platform.gcp.region: Invalid value: \"us-east4\": invalid region",
 		},
 		{
 			name:          "Valid XPN Service Account",
 			edits:         editFunctions{validNetworkProject, validateXpnSA},
+			records:       []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.example.installer.domain."}},
 			expectedError: false,
 		},
 		{
 			name:           "Invalid XPN Service Account",
 			edits:          editFunctions{validNetworkProject, invalidateXpnSA},
+			records:        []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.example.installer.domain."}},
 			expectedError:  true,
 			expectedErrMsg: "controlPlane.platform.gcp.serviceAccount: Internal error\"",
 		},
 		{
 			name:          "Valid Control Plane KMS Key",
 			edits:         editFunctions{validCPKMSKeyRing},
+			records:       []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.example.installer.domain."}},
 			expectedError: false,
 		},
 		{
 			name:           "Invalid Control Plane KMS Key",
 			edits:          editFunctions{invalidateCPKMSKeyRing},
+			records:        []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.example.installer.domain."}},
 			expectedError:  true,
 			expectedErrMsg: "platform.gcp.controlPlane.encryptionKey.kmsKey.keyRing: Invalid value: \"invalidKeyRingName\": failed to find key ring invalidKeyRingName: data",
 		},
 		{
 			name:          "Valid Compute KMS Key",
 			edits:         editFunctions{validComputeKMSKeyRing},
+			records:       []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.example.installer.domain."}},
 			expectedError: false,
 		},
 		{
 			name:           "Invalid Compute KMS Key",
 			edits:          editFunctions{invalidateComputeKMSKeyRing},
+			records:        []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.example.installer.domain."}},
 			expectedError:  true,
 			expectedErrMsg: "platform.gcp.compute.encryptionKey.kmsKey.keyRing: Invalid value: \"invalidKeyRingName\": failed to find key ring invalidKeyRingName: data",
 		},
 		{
 			name:           "Valid Control Plane Invalid Compute Invalid Default Machine KMS Key",
 			edits:          editFunctions{validCPKMSKeyRing, invalidateComputeKMSKeyRing, invalidDefaultMachineKeyRing},
+			records:        []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.example.installer.domain."}},
 			expectedError:  true,
 			expectedErrMsg: "platform.gcp.compute.encryptionKey.kmsKey.keyRing: Invalid value: \"invalidKeyRingName\": failed to find key ring invalidKeyRingName: data, platform.gcp.defaultMachinePool.encryptionKey.kmsKey.keyRing: Invalid value: \"invalidKeyRingName\": failed to find key ring invalidKeyRingName: data",
 		},
 		{
 			name:          "Valid Service Endpoint Override",
 			edits:         editFunctions{validServiceEndpoint},
+			records:       []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.example.installer.domain."}},
 			expectedError: false,
 		},
 		{
 			name:           "Invalid Service Endpoint Override Bad Format",
 			edits:          editFunctions{invalidServiceEndpointBadFormat},
+			records:        []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.example.installer.domain."}},
 			expectedError:  true,
 			expectedErrMsg: `[platform.gcp.serviceEndpoint\[0\]: Invalid value: \"http://badstorage.googleapis\": Head \"http://badstorage.googleapis\": dial tcp: lookup badstorage.googleapis: no such host]`,
+		},
+		{
+			name:           "Invalid Base Domain",
+			edits:          editFunctions{invalidateBaseDomain},
+			records:        []*dns.ResourceRecordSet{},
+			expectedError:  true,
+			expectedErrMsg: `baseDomain: Not found: "invalid.installer.domain."`,
+		},
+		{
+			name:          "Custom DNS does not require existing base domain",
+			edits:         editFunctions{enableCustomDNS, invalidateBaseDomain},
+			records:       []*dns.ResourceRecordSet{},
+			expectedError: false,
 		},
 	}
 	mockCtrl := gomock.NewController(t)
@@ -490,10 +541,20 @@ func TestGCPInstallConfigValidation(t *testing.T) {
 	// Return fake credentials when asked
 	gcpClient.EXPECT().GetCredentials().Return(&googleoauth.Credentials{JSON: []byte(fakeCreds)}).AnyTimes()
 
+	params := gcp.DNSZoneParams{
+		Project:    validProjectName,
+		IsPublic:   false,
+		BaseDomain: "valid-cluster.example.installer.domain",
+	}
+	gcpClient.EXPECT().GetDNSZoneFromParams(gomock.Any(), params).Return(&validPrivateDNSZone, nil).AnyTimes()
+
 	// Expected results for the managed zone tests
 	gcpClient.EXPECT().GetDNSZoneByName(gomock.Any(), gomock.Any(), validPublicZone).Return(&validPublicDNSZone, nil).AnyTimes()
 	gcpClient.EXPECT().GetDNSZoneByName(gomock.Any(), gomock.Any(), validPrivateZone).Return(&validPrivateDNSZone, nil).AnyTimes()
 	gcpClient.EXPECT().GetDNSZoneByName(gomock.Any(), gomock.Any(), invalidPublicZone).Return(nil, fmt.Errorf("no matching DNS Zone found")).AnyTimes()
+
+	records := []*dns.ResourceRecordSet{{Name: "valid-cluster.example.installer.domain."}}
+	gcpClient.EXPECT().GetRecordSets(gomock.Any(), validProjectName, validPrivateZone).Return(records, nil).AnyTimes()
 
 	gcpClient.EXPECT().GetServiceAccount(gomock.Any(), validProjectName, validXpnSA).Return(validXpnSA, nil).AnyTimes()
 	gcpClient.EXPECT().GetServiceAccount(gomock.Any(), validProjectName, invalidXpnSA).Return("", fmt.Errorf("controlPlane.platform.gcp.serviceAccount: Internal error\"")).AnyTimes()
@@ -503,6 +564,10 @@ func TestGCPInstallConfigValidation(t *testing.T) {
 	}
 	gcpClient.EXPECT().GetKeyRing(gomock.Any(), &validKeyRing).Return(validKeyRingRet, nil).AnyTimes()
 	gcpClient.EXPECT().GetKeyRing(gomock.Any(), &invalidKeyRing).Return(nil, fmt.Errorf("failed to find key ring invalidKeyRingName: data")).AnyTimes()
+
+	gcpClient.EXPECT().GetDNSZone(gomock.Any(), validProjectName, validBaseDomain, true).Return(&dns.ManagedZone{Name: validZone}, nil).AnyTimes()
+	gcpClient.EXPECT().GetDNSZone(gomock.Any(), invalidProjectName, validBaseDomain, true).Return(&dns.ManagedZone{Name: validZone}, nil).AnyTimes()
+	gcpClient.EXPECT().GetDNSZone(gomock.Any(), validProjectName, invalidBaseDomain, true).Return(nil, fmt.Errorf("baseDomain: Not found: \"%s\"", invalidBaseDomain)).AnyTimes()
 
 	httpmock.Activate()
 	defer httpmock.DeactivateAndReset()
@@ -533,6 +598,8 @@ func TestGCPInstallConfigValidation(t *testing.T) {
 				edit(editedInstallConfig)
 			}
 
+			gcpClient.EXPECT().GetRecordSets(gomock.Any(), gomock.Eq(editedInstallConfig.GCP.ProjectID), gomock.Eq(validZone)).Return(tc.records, nil).AnyTimes()
+
 			errs := Validate(gcpClient, editedInstallConfig)
 			if tc.expectedError {
 				assert.Regexp(t, tc.expectedErrMsg, errs)
@@ -545,23 +612,60 @@ func TestGCPInstallConfigValidation(t *testing.T) {
 
 func TestValidatePreExistingPublicDNS(t *testing.T) {
 	cases := []struct {
-		name    string
-		records []*dns.ResourceRecordSet
-		err     string
+		name     string
+		records  []*dns.ResourceRecordSet
+		platform types.Platform
+		err      string
 	}{{
-		name:    "no pre-existing",
-		records: nil,
+		name:     "no pre-existing",
+		platform: types.Platform{GCP: &gcp.Platform{ProjectID: "project-id"}},
+		records:  nil,
 	}, {
-		name:    "no pre-existing",
-		records: []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.base-domain."}},
+		name:     "no pre-existing",
+		records:  []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.base-domain."}},
+		platform: types.Platform{GCP: &gcp.Platform{ProjectID: "project-id"}},
 	}, {
-		name:    "pre-existing",
+		name:     "pre-existing",
+		records:  []*dns.ResourceRecordSet{{Name: "api.cluster-name.base-domain."}},
+		platform: types.Platform{GCP: &gcp.Platform{ProjectID: "project-id"}},
+		err:      `^metadata\.name: Invalid value: "cluster-name": record\(s\) \["api\.cluster-name\.base-domain\."\] already exists in DNS Zone \(project-id/zone-name\) and might be in use by another cluster, please remove it to continue$`,
+	}, {
+		name:     "pre-existing",
+		records:  []*dns.ResourceRecordSet{{Name: "api.cluster-name.base-domain."}, {Name: "api.cluster-name.base-domain."}},
+		platform: types.Platform{GCP: &gcp.Platform{ProjectID: "project-id"}},
+		err:      `^metadata\.name: Invalid value: "cluster-name": record\(s\) \["api\.cluster-name\.base-domain\."\] already exists in DNS Zone \(project-id/zone-name\) and might be in use by another cluster, please remove it to continue$`,
+	}, {
+		name: "no pre-existing with specified zone",
+		platform: types.Platform{GCP: &gcp.Platform{
+			ProjectID: "other-project-id",
+			DNS: &gcp.DNS{
+				PrivateZone: &gcp.DNSZone{
+					Name:      "zone-name",
+					ProjectID: "project-id",
+				},
+			},
+			NetworkProjectID:   "network-project-id",
+			Network:            "test-network",
+			ControlPlaneSubnet: "test-subnet",
+			ComputeSubnet:      "test-subnet",
+		}},
+	}, {
+		name:    "pre-existing with specified zone",
 		records: []*dns.ResourceRecordSet{{Name: "api.cluster-name.base-domain."}},
-		err:     `^metadata\.name: Invalid value: "cluster-name": record\(s\) \["api\.cluster-name\.base-domain\."\] already exists in DNS Zone \(project-id/zone-name\) and might be in use by another cluster, please remove it to continue$`,
-	}, {
-		name:    "pre-existing",
-		records: []*dns.ResourceRecordSet{{Name: "api.cluster-name.base-domain."}, {Name: "api.cluster-name.base-domain."}},
-		err:     `^metadata\.name: Invalid value: "cluster-name": record\(s\) \["api\.cluster-name\.base-domain\."\] already exists in DNS Zone \(project-id/zone-name\) and might be in use by another cluster, please remove it to continue$`,
+		platform: types.Platform{GCP: &gcp.Platform{
+			ProjectID: "other-project-id",
+			DNS: &gcp.DNS{
+				PrivateZone: &gcp.DNSZone{
+					Name:      "zone-name",
+					ProjectID: "project-id",
+				},
+			},
+			NetworkProjectID:   "network-project-id",
+			Network:            "test-network",
+			ControlPlaneSubnet: "test-subnet",
+			ComputeSubnet:      "test-subnet",
+		}},
+		err: `^metadata\.name: Invalid value: "cluster-name": record\(s\) \["api\.cluster-name\.base-domain\."\] already exists in DNS Zone \(project-id/zone-name\) and might be in use by another cluster, please remove it to continue$`,
 	}}
 
 	for _, test := range cases {
@@ -577,7 +681,7 @@ func TestValidatePreExistingPublicDNS(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Name: "cluster-name"},
 				BaseDomain: "base-domain",
 				Platform:   types.Platform{GCP: &gcp.Platform{ProjectID: "project-id"}},
-			})
+			}).ToAggregate()
 			if test.err == "" {
 				assert.True(t, err == nil)
 			} else {
@@ -589,24 +693,63 @@ func TestValidatePreExistingPublicDNS(t *testing.T) {
 
 func TestValidatePrivateDNSZone(t *testing.T) {
 	cases := []struct {
-		name    string
-		records []*dns.ResourceRecordSet
-		err     string
+		name     string
+		records  []*dns.ResourceRecordSet
+		platform types.Platform
+		err      string
 	}{{
-		name:    "no pre-existing",
-		records: nil,
+		name:     "no pre-existing",
+		platform: types.Platform{GCP: &gcp.Platform{ProjectID: "project-id", Network: "shared-vpc", NetworkProjectID: "test-network-project"}},
+		records:  nil,
 	}, {
-		name:    "no pre-existing",
-		records: []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.base-domain."}},
+		name:     "no pre-existing",
+		platform: types.Platform{GCP: &gcp.Platform{ProjectID: "project-id", Network: "shared-vpc", NetworkProjectID: "test-network-project"}},
+		records:  []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.base-domain."}},
 	}, {
-		name:    "pre-existing",
+		name:     "pre-existing",
+		records:  []*dns.ResourceRecordSet{{Name: "api.cluster-name.base-domain."}},
+		platform: types.Platform{GCP: &gcp.Platform{ProjectID: "project-id", Network: "shared-vpc", NetworkProjectID: "test-network-project"}},
+		err:      `^metadata\.name: Invalid value: "cluster-name": record\(s\) \["api\.cluster-name\.base-domain\."\] already exists in DNS Zone \(project-id/zone-name\) and might be in use by another cluster, please remove it to continue$`,
+	}, {
+		name:     "pre-existing",
+		records:  []*dns.ResourceRecordSet{{Name: "api.cluster-name.base-domain."}, {Name: "api.cluster-name.base-domain."}},
+		platform: types.Platform{GCP: &gcp.Platform{ProjectID: "project-id", Network: "shared-vpc", NetworkProjectID: "test-network-project"}},
+		err:      `^metadata\.name: Invalid value: "cluster-name": record\(s\) \["api\.cluster-name\.base-domain\."\] already exists in DNS Zone \(project-id/zone-name\) and might be in use by another cluster, please remove it to continue$`,
+	}, {
+		name: "no pre-existing with specified zone",
+		platform: types.Platform{GCP: &gcp.Platform{
+			ProjectID: "other-project-id",
+			DNS: &gcp.DNS{
+				PrivateZone: &gcp.DNSZone{
+					Name:      "zone-name",
+					ProjectID: "project-id",
+				},
+			},
+			NetworkProjectID:   "network-project-id",
+			Network:            "test-network",
+			ControlPlaneSubnet: "test-subnet",
+			ComputeSubnet:      "test-subnet",
+		}},
+	}, {
+		name:    "pre-existing with specified zone",
 		records: []*dns.ResourceRecordSet{{Name: "api.cluster-name.base-domain."}},
-		err:     `^metadata\.name: Invalid value: "cluster-name": record\(s\) \["api\.cluster-name\.base-domain\."\] already exists in DNS Zone \(project-id/zone-name\) and might be in use by another cluster, please remove it to continue$`,
-	}, {
-		name:    "pre-existing",
-		records: []*dns.ResourceRecordSet{{Name: "api.cluster-name.base-domain."}, {Name: "api.cluster-name.base-domain."}},
-		err:     `^metadata\.name: Invalid value: "cluster-name": record\(s\) \["api\.cluster-name\.base-domain\."\] already exists in DNS Zone \(project-id/zone-name\) and might be in use by another cluster, please remove it to continue$`,
+		platform: types.Platform{GCP: &gcp.Platform{
+			ProjectID: "other-project-id",
+			DNS: &gcp.DNS{
+				PrivateZone: &gcp.DNSZone{
+					Name:      "zone-name",
+					ProjectID: "project-id",
+				},
+			},
+			NetworkProjectID:   "network-project-id",
+			Network:            "test-network",
+			ControlPlaneSubnet: "test-subnet",
+			ComputeSubnet:      "test-subnet",
+		}},
+		err: `^metadata\.name: Invalid value: "cluster-name": record\(s\) \["api\.cluster-name\.base-domain\."\] already exists in DNS Zone \(project-id/zone-name\) and might be in use by another cluster, please remove it to continue$`,
 	}}
+
+	params := gcp.DNSZoneParams{Project: "project-id", IsPublic: false, BaseDomain: "cluster-name.base-domain"}
 
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
@@ -614,14 +757,19 @@ func TestValidatePrivateDNSZone(t *testing.T) {
 			defer mockCtrl.Finish()
 			gcpClient := mock.NewMockAPI(mockCtrl)
 
+			gcpClient.EXPECT().GetDNSZoneFromParams(gomock.Any(), params).Return(&dns.ManagedZone{Name: "zone-name"}, nil).AnyTimes()
+			if test.platform.GCP.DNS != nil && test.platform.GCP.DNS.PrivateZone != nil {
+				paramsWithName := gcp.DNSZoneParams{Project: "project-id", IsPublic: false, BaseDomain: "cluster-name.base-domain", Name: test.platform.GCP.DNS.PrivateZone.Name}
+				gcpClient.EXPECT().GetDNSZoneFromParams(gomock.Any(), paramsWithName).Return(&dns.ManagedZone{Name: "zone-name"}, nil).AnyTimes()
+			}
 			gcpClient.EXPECT().GetDNSZone(gomock.Any(), "project-id", "cluster-name.base-domain", false).Return(&dns.ManagedZone{Name: "zone-name"}, nil).AnyTimes()
 			gcpClient.EXPECT().GetRecordSets(gomock.Any(), gomock.Eq("project-id"), gomock.Eq("zone-name")).Return(test.records, nil).AnyTimes()
 
 			err := ValidatePrivateDNSZone(gcpClient, &types.InstallConfig{
 				ObjectMeta: metav1.ObjectMeta{Name: "cluster-name"},
 				BaseDomain: "base-domain",
-				Platform:   types.Platform{GCP: &gcp.Platform{ProjectID: "project-id", Network: "shared-vpc", NetworkProjectID: "test-network-project"}},
-			})
+				Platform:   test.platform,
+			}).ToAggregate()
 			if test.err == "" {
 				assert.True(t, err == nil)
 			} else {
@@ -1129,6 +1277,26 @@ func TestValidateInstanceType(t *testing.T) {
 			expectedErrMsg:      `^\[instance.onHostMaintenance: Invalid value: "Migrate": onHostMaintenace must be set to Terminate when confidentialCompute is IntelTrustedDomainExtensions\]`,
 		},
 		{
+			name:                "Enabled confidential compute with unsupported machine type",
+			zones:               []string{"a"},
+			instanceType:        "c3-standard-4",
+			diskType:            "pd-ssd",
+			onHostMaintenance:   "Terminate",
+			confidentialCompute: "Enabled",
+			expectedError:       true,
+			expectedErrMsg:      `^\[instance.type: Invalid value: "c3-standard-4": Machine type does not support a Confidential Compute value of Enabled. Machine types supporting Enabled: c2d, n2d, c3d\]`,
+		},
+		{
+			name:                "Enabled confidential compute with supported machine type",
+			zones:               []string{"a"},
+			instanceType:        "c3d-standard-4",
+			diskType:            "pd-ssd",
+			onHostMaintenance:   "Terminate",
+			confidentialCompute: "Enabled",
+			expectedError:       false,
+			expectedErrMsg:      "",
+		},
+		{
 			name:                "AMDEncryptedVirtualization confidential compute with unsupported machine type",
 			zones:               []string{"a"},
 			instanceType:        "c3-standard-4",
@@ -1136,7 +1304,7 @@ func TestValidateInstanceType(t *testing.T) {
 			onHostMaintenance:   "Terminate",
 			confidentialCompute: "AMDEncryptedVirtualization",
 			expectedError:       true,
-			expectedErrMsg:      `^\[instance.type: Invalid value: "c3-standard-4": Machine type do not support AMDEncryptedVirtualization. Machine types supporting AMDEncryptedVirtualization: c2d, n2d, c3d\]`,
+			expectedErrMsg:      `^\[instance.type: Invalid value: "c3-standard-4": Machine type does not support a Confidential Compute value of AMDEncryptedVirtualization. Machine types supporting AMDEncryptedVirtualization: c2d, n2d, c3d\]`,
 		},
 		{
 			name:                "AMDEncryptedVirtualization confidential compute with supported machine type",
@@ -1156,7 +1324,7 @@ func TestValidateInstanceType(t *testing.T) {
 			onHostMaintenance:   "Terminate",
 			confidentialCompute: "AMDEncryptedVirtualizationNestedPaging",
 			expectedError:       true,
-			expectedErrMsg:      `^\[instance.type: Invalid value: "c2d-standard-4": Machine type do not support AMDEncryptedVirtualizationNestedPaging. Machine types supporting AMDEncryptedVirtualizationNestedPaging: n2d\]`,
+			expectedErrMsg:      `^\[instance.type: Invalid value: "c2d-standard-4": Machine type does not support a Confidential Compute value of AMDEncryptedVirtualizationNestedPaging. Machine types supporting AMDEncryptedVirtualizationNestedPaging: n2d\]`,
 		},
 		{
 			name:                "AMDEncryptedVirtualizationNestedPaging confidential compute with supported machine type",
@@ -1176,7 +1344,7 @@ func TestValidateInstanceType(t *testing.T) {
 			onHostMaintenance:   "Terminate",
 			confidentialCompute: "IntelTrustedDomainExtensions",
 			expectedError:       true,
-			expectedErrMsg:      `^\[instance.type: Invalid value: "n2d-standard-4": Machine type do not support IntelTrustedDomainExtensions. Machine types supporting IntelTrustedDomainExtensions: c3\]`,
+			expectedErrMsg:      `^\[instance.type: Invalid value: "n2d-standard-4": Machine type does not support a Confidential Compute value of IntelTrustedDomainExtensions. Machine types supporting IntelTrustedDomainExtensions: c3\]`,
 		},
 		{
 			name:                "IntelTrustedDomainExtensions confidential compute with supported machine type",

@@ -58,14 +58,12 @@ var (
 		none.Name,
 	}
 
-	// FCOS is a setting to enable Fedora CoreOS-only modifications
-	FCOS = false
 	// SCOS is a setting to enable CentOS Stream CoreOS-only modifications
 	SCOS = false
 )
 
 // PublishingStrategy is a strategy for how various endpoints for the cluster are exposed.
-// +kubebuilder:validation:Enum="";External;Internal
+// +kubebuilder:validation:Enum="";External;Internal;Mixed
 type PublishingStrategy string
 
 const (
@@ -159,6 +157,7 @@ type InstallConfig struct {
 	ImageDigestSources []ImageDigestSource `json:"imageDigestSources,omitempty"`
 
 	// Publish controls how the user facing endpoints of the cluster like the Kubernetes API, OpenShift routes etc. are exposed.
+	// A "Mixed" strategy only applies to the "azure" platform, and requires "operatorPublishingStrategy" to be configured.
 	// When no strategy is specified, the strategy is "External".
 	//
 	// +kubebuilder:default=External
@@ -194,13 +193,14 @@ type InstallConfig struct {
 	// "Passthrough": copy the credentials with all of the overall permissions for each CredentialsRequest
 	// "Manual": CredentialsRequests must be handled manually by the user
 	//
-	// For each of the following platforms, the field can set to the specified values. For all other platforms, the
+	// For each of the following platforms, the field can be set to the specified values. For all other platforms, the
 	// field must not be set.
 	// AWS: "Mint", "Passthrough", "Manual"
 	// Azure: "Passthrough", "Manual"
 	// AzureStack: "Manual"
 	// GCP: "Mint", "Passthrough", "Manual"
 	// IBMCloud: "Manual"
+	// OpenStack: "Passthrough"
 	// PowerVS: "Manual"
 	// Nutanix: "Manual"
 	// +optional
@@ -233,11 +233,6 @@ func (c *InstallConfig) ClusterDomain() string {
 	return fmt.Sprintf("%s.%s", c.ObjectMeta.Name, strings.TrimSuffix(c.BaseDomain, "."))
 }
 
-// IsFCOS returns true if Fedora CoreOS-only modifications are enabled
-func (c *InstallConfig) IsFCOS() bool {
-	return FCOS
-}
-
 // IsSCOS returns true if CentOs Stream CoreOS-only modifications are enabled
 func (c *InstallConfig) IsSCOS() bool {
 	return SCOS
@@ -245,7 +240,7 @@ func (c *InstallConfig) IsSCOS() bool {
 
 // IsOKD returns true if community-only modifications are enabled
 func (c *InstallConfig) IsOKD() bool {
-	return c.IsFCOS() || c.IsSCOS()
+	return c.IsSCOS()
 }
 
 // IsSingleNodeOpenShift returns true if the install-config has been configured for
@@ -625,18 +620,6 @@ func (c *InstallConfig) EnabledFeatureGates() featuregates.FeatureGate {
 	fg := featuregates.FeatureGateFromFeatureSets(featureSets, c.FeatureSet, customFS)
 
 	return fg
-}
-
-// MultiArchFeatureGateEnabled checks whether feature gate enabling multi-arch clusters is enabled.
-func MultiArchFeatureGateEnabled(platform string, fgs featuregates.FeatureGate) bool {
-	switch platform {
-	case aws.Name:
-		return fgs.Enabled(features.FeatureGateMultiArchInstallAWS)
-	case gcp.Name:
-		return fgs.Enabled(features.FeatureGateMultiArchInstallGCP)
-	default:
-		return false
-	}
 }
 
 // PublicAPI indicates whether the API load balancer should be public
