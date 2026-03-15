@@ -4,12 +4,23 @@ package v1alpha1
 
 // MachineConfigNodeStatusPinnedImageSetApplyConfiguration represents a declarative configuration of the MachineConfigNodeStatusPinnedImageSet type for use
 // with apply.
+//
+// MachineConfigNodeStatusPinnedImageSet holds information about the current, desired, and failed pinned image sets for the observed machine config node.
 type MachineConfigNodeStatusPinnedImageSetApplyConfiguration struct {
-	Name                       *string  `json:"name,omitempty"`
-	CurrentGeneration          *int32   `json:"currentGeneration,omitempty"`
-	DesiredGeneration          *int32   `json:"desiredGeneration,omitempty"`
-	LastFailedGeneration       *int32   `json:"lastFailedGeneration,omitempty"`
-	LastFailedGenerationErrors []string `json:"lastFailedGenerationErrors,omitempty"`
+	// name is the name of the pinned image set.
+	// Must be a lowercase RFC-1123 subdomain name (https://tools.ietf.org/html/rfc1123) consisting
+	// of only lowercase alphanumeric characters, hyphens (-), and periods (.), and must start and end
+	// with an alphanumeric character, and be at most 253 characters in length.
+	Name *string `json:"name,omitempty"`
+	// currentGeneration is the generation of the pinned image set that has most recently been successfully pulled and pinned on this node.
+	CurrentGeneration *int32 `json:"currentGeneration,omitempty"`
+	// desiredGeneration is the generation of the pinned image set that is targeted to be pulled and pinned on this node.
+	DesiredGeneration *int32 `json:"desiredGeneration,omitempty"`
+	// lastFailedGeneration is the generation of the most recent pinned image set that failed to be pulled and pinned on this node.
+	LastFailedGeneration *int32 `json:"lastFailedGeneration,omitempty"`
+	// lastFailedGenerationError is the error explaining why the desired images failed to be pulled and pinned.
+	// The error is an empty string if the image pull and pin is successful.
+	LastFailedGenerationError *string `json:"lastFailedGenerationError,omitempty"`
 }
 
 // MachineConfigNodeStatusPinnedImageSetApplyConfiguration constructs a declarative configuration of the MachineConfigNodeStatusPinnedImageSet type for use with
@@ -50,12 +61,10 @@ func (b *MachineConfigNodeStatusPinnedImageSetApplyConfiguration) WithLastFailed
 	return b
 }
 
-// WithLastFailedGenerationErrors adds the given value to the LastFailedGenerationErrors field in the declarative configuration
-// and returns the receiver, so that objects can be build by chaining "With" function invocations.
-// If called multiple times, values provided by each call will be appended to the LastFailedGenerationErrors field.
-func (b *MachineConfigNodeStatusPinnedImageSetApplyConfiguration) WithLastFailedGenerationErrors(values ...string) *MachineConfigNodeStatusPinnedImageSetApplyConfiguration {
-	for i := range values {
-		b.LastFailedGenerationErrors = append(b.LastFailedGenerationErrors, values[i])
-	}
+// WithLastFailedGenerationError sets the LastFailedGenerationError field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the LastFailedGenerationError field is set to the value of the last call.
+func (b *MachineConfigNodeStatusPinnedImageSetApplyConfiguration) WithLastFailedGenerationError(value string) *MachineConfigNodeStatusPinnedImageSetApplyConfiguration {
+	b.LastFailedGenerationError = &value
 	return b
 }

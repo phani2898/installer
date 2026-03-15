@@ -13,11 +13,17 @@ import (
 
 // MachineConfigNodeApplyConfiguration represents a declarative configuration of the MachineConfigNode type for use
 // with apply.
+//
+// MachineConfigNode describes the health of the Machines on the system
+// Compatibility level 4: No compatibility is provided, the API can change at any point for any reason. These capabilities should not be used by applications needing long term support.
 type MachineConfigNodeApplyConfiguration struct {
-	v1.TypeMetaApplyConfiguration    `json:",inline"`
+	v1.TypeMetaApplyConfiguration `json:",inline"`
+	// metadata is the standard object metadata.
 	*v1.ObjectMetaApplyConfiguration `json:"metadata,omitempty"`
-	Spec                             *MachineConfigNodeSpecApplyConfiguration   `json:"spec,omitempty"`
-	Status                           *MachineConfigNodeStatusApplyConfiguration `json:"status,omitempty"`
+	// spec describes the configuration of the machine config node.
+	Spec *MachineConfigNodeSpecApplyConfiguration `json:"spec,omitempty"`
+	// status describes the last observed state of this machine config node.
+	Status *MachineConfigNodeStatusApplyConfiguration `json:"status,omitempty"`
 }
 
 // MachineConfigNode constructs a declarative configuration of the MachineConfigNode type for use with
@@ -30,29 +36,14 @@ func MachineConfigNode(name string) *MachineConfigNodeApplyConfiguration {
 	return b
 }
 
-// ExtractMachineConfigNode extracts the applied configuration owned by fieldManager from
-// machineConfigNode. If no managedFields are found in machineConfigNode for fieldManager, a
-// MachineConfigNodeApplyConfiguration is returned with only the Name, Namespace (if applicable),
-// APIVersion and Kind populated. It is possible that no managed fields were found for because other
-// field managers have taken ownership of all the fields previously owned by fieldManager, or because
-// the fieldManager never owned fields any fields.
+// ExtractMachineConfigNodeFrom extracts the applied configuration owned by fieldManager from
+// machineConfigNode for the specified subresource. Pass an empty string for subresource to extract
+// the main resource. Common subresources include "status", "scale", etc.
 // machineConfigNode must be a unmodified MachineConfigNode API object that was retrieved from the Kubernetes API.
-// ExtractMachineConfigNode provides a way to perform a extract/modify-in-place/apply workflow.
+// ExtractMachineConfigNodeFrom provides a way to perform a extract/modify-in-place/apply workflow.
 // Note that an extracted apply configuration will contain fewer fields than what the fieldManager previously
 // applied if another fieldManager has updated or force applied any of the previously applied fields.
-// Experimental!
-func ExtractMachineConfigNode(machineConfigNode *machineconfigurationv1alpha1.MachineConfigNode, fieldManager string) (*MachineConfigNodeApplyConfiguration, error) {
-	return extractMachineConfigNode(machineConfigNode, fieldManager, "")
-}
-
-// ExtractMachineConfigNodeStatus is the same as ExtractMachineConfigNode except
-// that it extracts the status subresource applied configuration.
-// Experimental!
-func ExtractMachineConfigNodeStatus(machineConfigNode *machineconfigurationv1alpha1.MachineConfigNode, fieldManager string) (*MachineConfigNodeApplyConfiguration, error) {
-	return extractMachineConfigNode(machineConfigNode, fieldManager, "status")
-}
-
-func extractMachineConfigNode(machineConfigNode *machineconfigurationv1alpha1.MachineConfigNode, fieldManager string, subresource string) (*MachineConfigNodeApplyConfiguration, error) {
+func ExtractMachineConfigNodeFrom(machineConfigNode *machineconfigurationv1alpha1.MachineConfigNode, fieldManager string, subresource string) (*MachineConfigNodeApplyConfiguration, error) {
 	b := &MachineConfigNodeApplyConfiguration{}
 	err := managedfields.ExtractInto(machineConfigNode, internal.Parser().Type("com.github.openshift.api.machineconfiguration.v1alpha1.MachineConfigNode"), fieldManager, b, subresource)
 	if err != nil {
@@ -65,11 +56,33 @@ func extractMachineConfigNode(machineConfigNode *machineconfigurationv1alpha1.Ma
 	return b, nil
 }
 
+// ExtractMachineConfigNode extracts the applied configuration owned by fieldManager from
+// machineConfigNode. If no managedFields are found in machineConfigNode for fieldManager, a
+// MachineConfigNodeApplyConfiguration is returned with only the Name, Namespace (if applicable),
+// APIVersion and Kind populated. It is possible that no managed fields were found for because other
+// field managers have taken ownership of all the fields previously owned by fieldManager, or because
+// the fieldManager never owned fields any fields.
+// machineConfigNode must be a unmodified MachineConfigNode API object that was retrieved from the Kubernetes API.
+// ExtractMachineConfigNode provides a way to perform a extract/modify-in-place/apply workflow.
+// Note that an extracted apply configuration will contain fewer fields than what the fieldManager previously
+// applied if another fieldManager has updated or force applied any of the previously applied fields.
+func ExtractMachineConfigNode(machineConfigNode *machineconfigurationv1alpha1.MachineConfigNode, fieldManager string) (*MachineConfigNodeApplyConfiguration, error) {
+	return ExtractMachineConfigNodeFrom(machineConfigNode, fieldManager, "")
+}
+
+// ExtractMachineConfigNodeStatus extracts the applied configuration owned by fieldManager from
+// machineConfigNode for the status subresource.
+func ExtractMachineConfigNodeStatus(machineConfigNode *machineconfigurationv1alpha1.MachineConfigNode, fieldManager string) (*MachineConfigNodeApplyConfiguration, error) {
+	return ExtractMachineConfigNodeFrom(machineConfigNode, fieldManager, "status")
+}
+
+func (b MachineConfigNodeApplyConfiguration) IsApplyConfiguration() {}
+
 // WithKind sets the Kind field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the Kind field is set to the value of the last call.
 func (b *MachineConfigNodeApplyConfiguration) WithKind(value string) *MachineConfigNodeApplyConfiguration {
-	b.Kind = &value
+	b.TypeMetaApplyConfiguration.Kind = &value
 	return b
 }
 
@@ -77,7 +90,7 @@ func (b *MachineConfigNodeApplyConfiguration) WithKind(value string) *MachineCon
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the APIVersion field is set to the value of the last call.
 func (b *MachineConfigNodeApplyConfiguration) WithAPIVersion(value string) *MachineConfigNodeApplyConfiguration {
-	b.APIVersion = &value
+	b.TypeMetaApplyConfiguration.APIVersion = &value
 	return b
 }
 
@@ -86,7 +99,7 @@ func (b *MachineConfigNodeApplyConfiguration) WithAPIVersion(value string) *Mach
 // If called multiple times, the Name field is set to the value of the last call.
 func (b *MachineConfigNodeApplyConfiguration) WithName(value string) *MachineConfigNodeApplyConfiguration {
 	b.ensureObjectMetaApplyConfigurationExists()
-	b.Name = &value
+	b.ObjectMetaApplyConfiguration.Name = &value
 	return b
 }
 
@@ -95,7 +108,7 @@ func (b *MachineConfigNodeApplyConfiguration) WithName(value string) *MachineCon
 // If called multiple times, the GenerateName field is set to the value of the last call.
 func (b *MachineConfigNodeApplyConfiguration) WithGenerateName(value string) *MachineConfigNodeApplyConfiguration {
 	b.ensureObjectMetaApplyConfigurationExists()
-	b.GenerateName = &value
+	b.ObjectMetaApplyConfiguration.GenerateName = &value
 	return b
 }
 
@@ -104,7 +117,7 @@ func (b *MachineConfigNodeApplyConfiguration) WithGenerateName(value string) *Ma
 // If called multiple times, the Namespace field is set to the value of the last call.
 func (b *MachineConfigNodeApplyConfiguration) WithNamespace(value string) *MachineConfigNodeApplyConfiguration {
 	b.ensureObjectMetaApplyConfigurationExists()
-	b.Namespace = &value
+	b.ObjectMetaApplyConfiguration.Namespace = &value
 	return b
 }
 
@@ -113,7 +126,7 @@ func (b *MachineConfigNodeApplyConfiguration) WithNamespace(value string) *Machi
 // If called multiple times, the UID field is set to the value of the last call.
 func (b *MachineConfigNodeApplyConfiguration) WithUID(value types.UID) *MachineConfigNodeApplyConfiguration {
 	b.ensureObjectMetaApplyConfigurationExists()
-	b.UID = &value
+	b.ObjectMetaApplyConfiguration.UID = &value
 	return b
 }
 
@@ -122,7 +135,7 @@ func (b *MachineConfigNodeApplyConfiguration) WithUID(value types.UID) *MachineC
 // If called multiple times, the ResourceVersion field is set to the value of the last call.
 func (b *MachineConfigNodeApplyConfiguration) WithResourceVersion(value string) *MachineConfigNodeApplyConfiguration {
 	b.ensureObjectMetaApplyConfigurationExists()
-	b.ResourceVersion = &value
+	b.ObjectMetaApplyConfiguration.ResourceVersion = &value
 	return b
 }
 
@@ -131,7 +144,7 @@ func (b *MachineConfigNodeApplyConfiguration) WithResourceVersion(value string) 
 // If called multiple times, the Generation field is set to the value of the last call.
 func (b *MachineConfigNodeApplyConfiguration) WithGeneration(value int64) *MachineConfigNodeApplyConfiguration {
 	b.ensureObjectMetaApplyConfigurationExists()
-	b.Generation = &value
+	b.ObjectMetaApplyConfiguration.Generation = &value
 	return b
 }
 
@@ -140,7 +153,7 @@ func (b *MachineConfigNodeApplyConfiguration) WithGeneration(value int64) *Machi
 // If called multiple times, the CreationTimestamp field is set to the value of the last call.
 func (b *MachineConfigNodeApplyConfiguration) WithCreationTimestamp(value metav1.Time) *MachineConfigNodeApplyConfiguration {
 	b.ensureObjectMetaApplyConfigurationExists()
-	b.CreationTimestamp = &value
+	b.ObjectMetaApplyConfiguration.CreationTimestamp = &value
 	return b
 }
 
@@ -149,7 +162,7 @@ func (b *MachineConfigNodeApplyConfiguration) WithCreationTimestamp(value metav1
 // If called multiple times, the DeletionTimestamp field is set to the value of the last call.
 func (b *MachineConfigNodeApplyConfiguration) WithDeletionTimestamp(value metav1.Time) *MachineConfigNodeApplyConfiguration {
 	b.ensureObjectMetaApplyConfigurationExists()
-	b.DeletionTimestamp = &value
+	b.ObjectMetaApplyConfiguration.DeletionTimestamp = &value
 	return b
 }
 
@@ -158,7 +171,7 @@ func (b *MachineConfigNodeApplyConfiguration) WithDeletionTimestamp(value metav1
 // If called multiple times, the DeletionGracePeriodSeconds field is set to the value of the last call.
 func (b *MachineConfigNodeApplyConfiguration) WithDeletionGracePeriodSeconds(value int64) *MachineConfigNodeApplyConfiguration {
 	b.ensureObjectMetaApplyConfigurationExists()
-	b.DeletionGracePeriodSeconds = &value
+	b.ObjectMetaApplyConfiguration.DeletionGracePeriodSeconds = &value
 	return b
 }
 
@@ -168,11 +181,11 @@ func (b *MachineConfigNodeApplyConfiguration) WithDeletionGracePeriodSeconds(val
 // overwriting an existing map entries in Labels field with the same key.
 func (b *MachineConfigNodeApplyConfiguration) WithLabels(entries map[string]string) *MachineConfigNodeApplyConfiguration {
 	b.ensureObjectMetaApplyConfigurationExists()
-	if b.Labels == nil && len(entries) > 0 {
-		b.Labels = make(map[string]string, len(entries))
+	if b.ObjectMetaApplyConfiguration.Labels == nil && len(entries) > 0 {
+		b.ObjectMetaApplyConfiguration.Labels = make(map[string]string, len(entries))
 	}
 	for k, v := range entries {
-		b.Labels[k] = v
+		b.ObjectMetaApplyConfiguration.Labels[k] = v
 	}
 	return b
 }
@@ -183,11 +196,11 @@ func (b *MachineConfigNodeApplyConfiguration) WithLabels(entries map[string]stri
 // overwriting an existing map entries in Annotations field with the same key.
 func (b *MachineConfigNodeApplyConfiguration) WithAnnotations(entries map[string]string) *MachineConfigNodeApplyConfiguration {
 	b.ensureObjectMetaApplyConfigurationExists()
-	if b.Annotations == nil && len(entries) > 0 {
-		b.Annotations = make(map[string]string, len(entries))
+	if b.ObjectMetaApplyConfiguration.Annotations == nil && len(entries) > 0 {
+		b.ObjectMetaApplyConfiguration.Annotations = make(map[string]string, len(entries))
 	}
 	for k, v := range entries {
-		b.Annotations[k] = v
+		b.ObjectMetaApplyConfiguration.Annotations[k] = v
 	}
 	return b
 }
@@ -201,7 +214,7 @@ func (b *MachineConfigNodeApplyConfiguration) WithOwnerReferences(values ...*v1.
 		if values[i] == nil {
 			panic("nil value passed to WithOwnerReferences")
 		}
-		b.OwnerReferences = append(b.OwnerReferences, *values[i])
+		b.ObjectMetaApplyConfiguration.OwnerReferences = append(b.ObjectMetaApplyConfiguration.OwnerReferences, *values[i])
 	}
 	return b
 }
@@ -212,7 +225,7 @@ func (b *MachineConfigNodeApplyConfiguration) WithOwnerReferences(values ...*v1.
 func (b *MachineConfigNodeApplyConfiguration) WithFinalizers(values ...string) *MachineConfigNodeApplyConfiguration {
 	b.ensureObjectMetaApplyConfigurationExists()
 	for i := range values {
-		b.Finalizers = append(b.Finalizers, values[i])
+		b.ObjectMetaApplyConfiguration.Finalizers = append(b.ObjectMetaApplyConfiguration.Finalizers, values[i])
 	}
 	return b
 }
@@ -239,8 +252,24 @@ func (b *MachineConfigNodeApplyConfiguration) WithStatus(value *MachineConfigNod
 	return b
 }
 
+// GetKind retrieves the value of the Kind field in the declarative configuration.
+func (b *MachineConfigNodeApplyConfiguration) GetKind() *string {
+	return b.TypeMetaApplyConfiguration.Kind
+}
+
+// GetAPIVersion retrieves the value of the APIVersion field in the declarative configuration.
+func (b *MachineConfigNodeApplyConfiguration) GetAPIVersion() *string {
+	return b.TypeMetaApplyConfiguration.APIVersion
+}
+
 // GetName retrieves the value of the Name field in the declarative configuration.
 func (b *MachineConfigNodeApplyConfiguration) GetName() *string {
 	b.ensureObjectMetaApplyConfigurationExists()
-	return b.Name
+	return b.ObjectMetaApplyConfiguration.Name
+}
+
+// GetNamespace retrieves the value of the Namespace field in the declarative configuration.
+func (b *MachineConfigNodeApplyConfiguration) GetNamespace() *string {
+	b.ensureObjectMetaApplyConfigurationExists()
+	return b.ObjectMetaApplyConfiguration.Namespace
 }

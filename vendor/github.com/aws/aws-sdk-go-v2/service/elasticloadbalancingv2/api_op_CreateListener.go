@@ -71,7 +71,7 @@ type CreateListenerInput struct {
 	//
 	// For more information, see [ALPN policies] in the Network Load Balancers Guide.
 	//
-	// [ALPN policies]: https://docs.aws.amazon.com/elasticloadbalancing/latest/network/create-tls-listener.html#alpn-policies
+	// [ALPN policies]: https://docs.aws.amazon.com/elasticloadbalancing/latest/network/load-balancer-listeners.html#alpn-policies
 	AlpnPolicy []string
 
 	// [HTTPS and TLS listeners] The default certificate for the listener. You must
@@ -79,7 +79,7 @@ type CreateListenerInput struct {
 	// do not set IsDefault .
 	Certificates []types.Certificate
 
-	// The mutual authentication configuration information.
+	// [HTTPS listeners] The mutual authentication configuration information.
 	MutualAuthentication *types.MutualAuthenticationAttributes
 
 	// The port on which the load balancer is listening. You can't specify a port for
@@ -88,9 +88,10 @@ type CreateListenerInput struct {
 
 	// The protocol for connections from clients to the load balancer. For Application
 	// Load Balancers, the supported protocols are HTTP and HTTPS. For Network Load
-	// Balancers, the supported protocols are TCP, TLS, UDP, and TCP_UDP. You can’t
-	// specify the UDP or TCP_UDP protocol if dual-stack mode is enabled. You can't
-	// specify a protocol for a Gateway Load Balancer.
+	// Balancers, the supported protocols are TCP, TLS, UDP, TCP_UDP, QUIC, and
+	// TCP_QUIC. You can’t specify the UDP, TCP_UDP, QUIC, or TCP_QUIC protocol if
+	// dual-stack mode is enabled. You can't specify a protocol for a Gateway Load
+	// Balancer.
 	Protocol types.ProtocolEnum
 
 	// [HTTPS and TLS listeners] The security policy that defines which protocols and
@@ -99,7 +100,7 @@ type CreateListenerInput struct {
 	// For more information, see [Security policies] in the Application Load Balancers Guide and [Security policies] in the
 	// Network Load Balancers Guide.
 	//
-	// [Security policies]: https://docs.aws.amazon.com/elasticloadbalancing/latest/network/create-tls-listener.html#describe-ssl-policies
+	// [Security policies]: https://docs.aws.amazon.com/elasticloadbalancing/latest/network/describe-ssl-policies.html
 	SslPolicy *string
 
 	// The tags to assign to the listener.
@@ -183,6 +184,9 @@ func (c *Client) addOperationCreateListenerMiddlewares(stack *middleware.Stack, 
 	if err = addUserAgentRetryMode(stack, options); err != nil {
 		return err
 	}
+	if err = addCredentialSource(stack, options); err != nil {
+		return err
+	}
 	if err = addOpCreateListenerValidationMiddleware(stack); err != nil {
 		return err
 	}
@@ -204,16 +208,13 @@ func (c *Client) addOperationCreateListenerMiddlewares(stack *middleware.Stack, 
 	if err = addDisableHTTPSMiddleware(stack, options); err != nil {
 		return err
 	}
-	if err = addSpanInitializeStart(stack); err != nil {
+	if err = addInterceptBeforeRetryLoop(stack, options); err != nil {
 		return err
 	}
-	if err = addSpanInitializeEnd(stack); err != nil {
+	if err = addInterceptAttempt(stack, options); err != nil {
 		return err
 	}
-	if err = addSpanBuildRequestStart(stack); err != nil {
-		return err
-	}
-	if err = addSpanBuildRequestEnd(stack); err != nil {
+	if err = addInterceptors(stack, options); err != nil {
 		return err
 	}
 	return nil

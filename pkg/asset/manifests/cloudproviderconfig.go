@@ -4,19 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
+	"path"
 
 	"github.com/IBM/vpc-go-sdk/vpcv1"
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	capz "sigs.k8s.io/cluster-api-provider-azure/api/v1beta1"
 	"sigs.k8s.io/yaml"
 
-	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/installer/pkg/asset"
 	"github.com/openshift/installer/pkg/asset/installconfig"
 	awsic "github.com/openshift/installer/pkg/asset/installconfig/aws"
-	"github.com/openshift/installer/pkg/asset/installconfig/gcp"
 	powervsconfig "github.com/openshift/installer/pkg/asset/installconfig/powervs"
 	ibmcloudmachines "github.com/openshift/installer/pkg/asset/machines/ibmcloud"
 	"github.com/openshift/installer/pkg/asset/manifests/azure"
@@ -34,16 +33,18 @@ import (
 	externaltypes "github.com/openshift/installer/pkg/types/external"
 	gcptypes "github.com/openshift/installer/pkg/types/gcp"
 	ibmcloudtypes "github.com/openshift/installer/pkg/types/ibmcloud"
+	networktypes "github.com/openshift/installer/pkg/types/network"
 	nonetypes "github.com/openshift/installer/pkg/types/none"
 	nutanixtypes "github.com/openshift/installer/pkg/types/nutanix"
 	openstacktypes "github.com/openshift/installer/pkg/types/openstack"
 	ovirttypes "github.com/openshift/installer/pkg/types/ovirt"
+	powervctypes "github.com/openshift/installer/pkg/types/powervc"
 	powervstypes "github.com/openshift/installer/pkg/types/powervs"
 	vspheretypes "github.com/openshift/installer/pkg/types/vsphere"
 )
 
 var (
-	cloudProviderConfigFileName = filepath.Join(manifestDir, "cloud-provider-config.yaml")
+	cloudProviderConfigFileName = path.Join(manifestDir, "cloud-provider-config.yaml")
 )
 
 const (
@@ -113,13 +114,28 @@ func (cpc *CloudProviderConfig) Generate(ctx context.Context, dependencies asset
 			cm.Data[cloudProviderConfigCABundleDataKey] = trustBundle
 		}
 
-		// Include a non-empty kube config to appease components--such as the kube-apiserver--that
-		// expect there to be a kube config if the cloud-provider-config ConfigMap exists. See
-		// https://bugzilla.redhat.com/show_bug.cgi?id=1926975.
-		// Note that the newline is required in order to be valid yaml.
-		cm.Data[cloudProviderConfigDataKey] = `[Global]
+		var cloudCfg string
+		switch installConfig.Config.AWS.IPFamily {
+		case networktypes.DualStackIPv4Primary:
+			cloudCfg = `[Global]
+NodeIPFamilies=ipv4
+NodeIPFamilies=ipv6
 `
-	case openstacktypes.Name:
+		case networktypes.DualStackIPv6Primary:
+			cloudCfg = `[Global]
+NodeIPFamilies=ipv6
+NodeIPFamilies=ipv4
+`
+		default:
+			// Include a non-empty kube config to appease components--such as the kube-apiserver--that
+			// expect there to be a kube config if the cloud-provider-config ConfigMap exists. See
+			// https://bugzilla.redhat.com/show_bug.cgi?id=1926975.
+			// Note that the newline is required in order to be valid yaml.
+			cloudCfg = `[Global]
+`
+		}
+		cm.Data[cloudProviderConfigDataKey] = cloudCfg
+	case openstacktypes.Name, powervctypes.Name:
 		cloudProviderConfigData, cloudProviderConfigCABundleData, err := openstackmanifests.GenerateCloudProviderConfig(ctx, *installConfig.Config)
 		if err != nil {
 			return errors.Wrap(err, "failed to generate OpenStack provider config")
@@ -145,8 +161,11 @@ func (cpc *CloudProviderConfig) Generate(ctx context.Context, dependencies asset
 			vnet = installConfig.Config.Azure.VirtualNetwork
 		}
 		subnet := fmt.Sprintf("%s-worker-subnet", clusterID.InfraID)
-		if installConfig.Config.Azure.ComputeSubnet != "" {
-			subnet = installConfig.Config.Azure.ComputeSubnet
+		for _, subnetSpec := range installConfig.Config.Azure.Subnets {
+			if subnetSpec.Role == capz.SubnetNode {
+				subnet = subnetSpec.Name
+				break
+			}
 		}
 		azureConfig, err := azure.CloudProviderConfig{
 			CloudName:                installConfig.Config.Azure.CloudName,
@@ -180,19 +199,9 @@ func (cpc *CloudProviderConfig) Generate(ctx context.Context, dependencies asset
 			subnet = installConfig.Config.GCP.ComputeSubnet
 		}
 
-		apiEndpoint := ""
-		containerAPIEndpoint := ""
-		for _, endpoint := range installConfig.Config.GCP.ServiceEndpoints {
-			// the installconfig should only allow one service endpoint for each
-			// name, otherwise this would take the last one.
-			switch endpoint.Name {
-			case configv1.GCPServiceEndpointNameCompute:
-				formattedURL := gcp.FormatGCPEndpoint(endpoint.Name, endpoint.URL, gcp.FormatGCPEndpointInput{SkipPath: false})
-				apiEndpoint = formattedURL
-			case configv1.GCPServiceEndpointNameContainer:
-				formattedURL := gcp.FormatGCPEndpoint(endpoint.Name, endpoint.URL, gcp.FormatGCPEndpointInput{SkipPath: false})
-				containerAPIEndpoint = formattedURL
-			}
+		firewallManagement := gcpmanifests.FirewallManagementEnabled
+		if installConfig.Config.GCP.FirewallRulesManagement == gcptypes.UnmanagedFirewallRules {
+			firewallManagement = gcpmanifests.FirewallManagementDisabled
 		}
 
 		gcpConfig, err := gcpmanifests.CloudProviderConfig(
@@ -200,8 +209,7 @@ func (cpc *CloudProviderConfig) Generate(ctx context.Context, dependencies asset
 			installConfig.Config.GCP.ProjectID,
 			subnet,
 			installConfig.Config.GCP.NetworkProjectID,
-			apiEndpoint,
-			containerAPIEndpoint,
+			firewallManagement,
 		)
 		if err != nil {
 			return errors.Wrap(err, "could not create cloud provider config")

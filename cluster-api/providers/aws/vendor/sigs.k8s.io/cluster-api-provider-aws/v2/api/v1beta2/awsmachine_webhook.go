@@ -17,6 +17,7 @@ limitations under the License.
 package v1beta2
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"net"
@@ -37,25 +38,40 @@ import (
 	"sigs.k8s.io/cluster-api-provider-aws/v2/feature"
 )
 
+const (
+	hostTenancy  = "host"
+	hostAffinity = "host"
+)
+
 // log is for logging in this package.
 var log = ctrl.Log.WithName("awsmachine-resource")
 
 func (r *AWSMachine) SetupWebhookWithManager(mgr ctrl.Manager) error {
+	w := new(awsMachineWebhook)
 	return ctrl.NewWebhookManagedBy(mgr).
 		For(r).
+		WithValidator(w).
+		WithDefaulter(w).
 		Complete()
 }
 
 // +kubebuilder:webhook:verbs=create;update,path=/validate-infrastructure-cluster-x-k8s-io-v1beta2-awsmachine,mutating=false,failurePolicy=fail,matchPolicy=Equivalent,groups=infrastructure.cluster.x-k8s.io,resources=awsmachines,versions=v1beta2,name=validation.awsmachine.infrastructure.cluster.x-k8s.io,sideEffects=None,admissionReviewVersions=v1;v1beta1
 // +kubebuilder:webhook:verbs=create;update,path=/mutate-infrastructure-cluster-x-k8s-io-v1beta2-awsmachine,mutating=true,failurePolicy=fail,groups=infrastructure.cluster.x-k8s.io,resources=awsmachines,versions=v1beta2,name=mawsmachine.kb.io,name=mutation.awsmachine.infrastructure.cluster.x-k8s.io,sideEffects=None,admissionReviewVersions=v1;v1beta1
 
+type awsMachineWebhook struct{}
+
 var (
-	_ webhook.Validator = &AWSMachine{}
-	_ webhook.Defaulter = &AWSMachine{}
+	_ webhook.CustomValidator = &awsMachineWebhook{}
+	_ webhook.CustomDefaulter = &awsMachineWebhook{}
 )
 
 // ValidateCreate implements webhook.Validator so a webhook will be registered for the type.
-func (r *AWSMachine) ValidateCreate() (admission.Warnings, error) {
+func (*awsMachineWebhook) ValidateCreate(_ context.Context, obj runtime.Object) (admission.Warnings, error) {
+	r, ok := obj.(*AWSMachine)
+	if !ok {
+		return nil, fmt.Errorf("expected an AWSMachine object but got %T", r)
+	}
+
 	var allErrs field.ErrorList
 
 	allErrs = append(allErrs, r.validateCloudInitSecret()...)
@@ -67,19 +83,26 @@ func (r *AWSMachine) ValidateCreate() (admission.Warnings, error) {
 	allErrs = append(allErrs, r.Spec.AdditionalTags.Validate()...)
 	allErrs = append(allErrs, r.validateNetworkElasticIPPool()...)
 	allErrs = append(allErrs, r.validateInstanceMarketType()...)
+	allErrs = append(allErrs, r.validateCapacityReservation()...)
+	allErrs = append(allErrs, r.validateHostAllocation()...)
 
 	return nil, aggregateObjErrors(r.GroupVersionKind().GroupKind(), r.Name, allErrs)
 }
 
 // ValidateUpdate implements webhook.Validator so a webhook will be registered for the type.
-func (r *AWSMachine) ValidateUpdate(old runtime.Object) (admission.Warnings, error) {
+func (*awsMachineWebhook) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Object) (admission.Warnings, error) {
+	r, ok := newObj.(*AWSMachine)
+	if !ok {
+		return nil, fmt.Errorf("expected an AWSMachine object but got %T", r)
+	}
+
 	newAWSMachine, err := runtime.DefaultUnstructuredConverter.ToUnstructured(r)
 	if err != nil {
 		return nil, apierrors.NewInvalid(GroupVersion.WithKind("AWSMachine").GroupKind(), r.Name, field.ErrorList{
 			field.InternalError(nil, errors.Wrap(err, "failed to convert new AWSMachine to unstructured object")),
 		})
 	}
-	oldAWSMachine, err := runtime.DefaultUnstructuredConverter.ToUnstructured(old)
+	oldAWSMachine, err := runtime.DefaultUnstructuredConverter.ToUnstructured(oldObj)
 	if err != nil {
 		return nil, apierrors.NewInvalid(GroupVersion.WithKind("AWSMachine").GroupKind(), r.Name, field.ErrorList{
 			field.InternalError(nil, errors.Wrap(err, "failed to convert old AWSMachine to unstructured object")),
@@ -91,6 +114,7 @@ func (r *AWSMachine) ValidateUpdate(old runtime.Object) (admission.Warnings, err
 	allErrs = append(allErrs, r.validateCloudInitSecret()...)
 	allErrs = append(allErrs, r.validateAdditionalSecurityGroups()...)
 	allErrs = append(allErrs, r.Spec.AdditionalTags.Validate()...)
+	allErrs = append(allErrs, r.validateHostAllocation()...)
 
 	newAWSMachineSpec := newAWSMachine["spec"].(map[string]interface{})
 	oldAWSMachineSpec := oldAWSMachine["spec"].(map[string]interface{})
@@ -325,8 +349,9 @@ func (r *AWSMachine) validateRootVolume() field.ErrorList {
 		if r.Spec.RootVolume.Type != VolumeTypeGP3 {
 			allErrs = append(allErrs, field.Required(field.NewPath("spec.rootVolume.throughput"), "throughput is valid only for type 'gp3'"))
 		}
-		if *r.Spec.RootVolume.Throughput < 0 {
-			allErrs = append(allErrs, field.Required(field.NewPath("spec.rootVolume.throughput"), "throughput must be nonnegative"))
+		// See https://aws.amazon.com/ebs/general-purpose/ for gp3 limits
+		if *r.Spec.RootVolume.Throughput < 125 || *r.Spec.RootVolume.Throughput > 2000 {
+			allErrs = append(allErrs, field.Required(field.NewPath("spec.awsLaunchTemplate.rootVolume.throughput"), "throughput must be between 125 Mib/s and 2000 MiB/s"))
 		}
 	}
 
@@ -359,6 +384,20 @@ func (r *AWSMachine) validateNetworkElasticIPPool() field.ErrorList {
 		allErrs = append(allErrs, field.Invalid(field.NewPath("spec.elasticIpPool.publicIpv4PoolFallbackOrder"), r.Spec.ElasticIPPool, "publicIpv4Pool must be set when publicIpv4PoolFallbackOrder is defined."))
 	}
 
+	return allErrs
+}
+
+func (r *AWSMachine) validateCapacityReservation() field.ErrorList {
+	var allErrs field.ErrorList
+	if r.Spec.CapacityReservationID != nil && r.Spec.CapacityReservationPreference != CapacityReservationPreferenceOnly && r.Spec.CapacityReservationPreference != "" {
+		allErrs = append(allErrs, field.Forbidden(field.NewPath("spec", "capacityReservationPreference"), "when capacityReservationId is specified, capacityReservationPreference may only be 'CapacityReservationsOnly' or empty"))
+	}
+	if r.Spec.CapacityReservationPreference == CapacityReservationPreferenceOnly && r.Spec.MarketType == MarketTypeSpot {
+		allErrs = append(allErrs, field.Forbidden(field.NewPath("spec", "capacityReservationPreference"), "when marketType is set to 'Spot', capacityReservationPreference cannot be set to 'CapacityReservationsOnly'"))
+	}
+	if r.Spec.CapacityReservationPreference == CapacityReservationPreferenceOnly && r.Spec.SpotMarketOptions != nil {
+		allErrs = append(allErrs, field.Forbidden(field.NewPath("spec", "capacityReservationPreference"), "when capacityReservationPreference is 'CapacityReservationsOnly', spotMarketOptions cannot be set (which implies marketType: 'Spot')"))
+	}
 	return allErrs
 }
 
@@ -402,24 +441,32 @@ func (r *AWSMachine) validateNonRootVolumes() field.ErrorList {
 }
 
 // ValidateDelete implements webhook.Validator so a webhook will be registered for the type.
-func (r *AWSMachine) ValidateDelete() (admission.Warnings, error) {
+func (*awsMachineWebhook) ValidateDelete(_ context.Context, _ runtime.Object) (admission.Warnings, error) {
 	return nil, nil
 }
 
 // Default implements webhook.Defaulter such that an empty CloudInit will be defined with a default
 // SecureSecretsBackend as SecretBackendSecretsManager iff InsecureSkipSecretsManager is unset.
-func (r *AWSMachine) Default() {
+func (*awsMachineWebhook) Default(_ context.Context, obj runtime.Object) error {
+	r, ok := obj.(*AWSMachine)
+	if !ok {
+		return fmt.Errorf("expected an AWSMachine object but got %T", r)
+	}
+
 	if !r.Spec.CloudInit.InsecureSkipSecretsManager && r.Spec.CloudInit.SecureSecretsBackend == "" && !r.ignitionEnabled() {
 		r.Spec.CloudInit.SecureSecretsBackend = SecretBackendSecretsManager
 	}
 
-	if r.ignitionEnabled() && r.Spec.Ignition.Version == "" {
-		if r.Spec.Ignition == nil {
-			r.Spec.Ignition = &Ignition{}
-		}
-
+	if r.ignitionEnabled() && r.Spec.Ignition.StorageType == "" {
+		r.Spec.Ignition.StorageType = DefaultIgnitionStorageType
+	}
+	// Defaults the version field if StorageType is not set to `UnencryptedUserData`.
+	// When using `UnencryptedUserData` the version field is ignored because the userdata defines its version itself.
+	if r.ignitionEnabled() && r.Spec.Ignition.Version == "" && r.Spec.Ignition.StorageType != IgnitionStorageTypeOptionUnencryptedUserData {
 		r.Spec.Ignition.Version = DefaultIgnitionVersion
 	}
+
+	return nil
 }
 
 func (r *AWSMachine) validateAdditionalSecurityGroups() field.ErrorList {
@@ -430,6 +477,34 @@ func (r *AWSMachine) validateAdditionalSecurityGroups() field.ErrorList {
 			allErrs = append(allErrs, field.Forbidden(field.NewPath("spec.additionalSecurityGroups"), "only one of ID or Filters may be specified, specifying both is forbidden"))
 		}
 	}
+	return allErrs
+}
+
+func (r *AWSMachine) validateHostAllocation() field.ErrorList {
+	var allErrs field.ErrorList
+
+	// Check if both hostID and dynamicHostAllocation are specified
+	hasHostID := r.Spec.HostID != nil && len(*r.Spec.HostID) > 0
+	hasDynamicHostAllocation := r.Spec.DynamicHostAllocation != nil
+
+	// If both hostID and dynamicHostAllocation are specified, return an error
+	if hasHostID && hasDynamicHostAllocation {
+		allErrs = append(allErrs, field.Forbidden(field.NewPath("spec.hostID"), "hostID and dynamicHostAllocation are mutually exclusive"), field.Forbidden(field.NewPath("spec.dynamicHostAllocation"), "hostID and dynamicHostAllocation are mutually exclusive"))
+	}
+
+	// HostID, HostAffinity, and DynamicHostAllocation can only be set when Tenancy is "host"
+	if hasHostID && r.Spec.Tenancy != hostTenancy {
+		allErrs = append(allErrs, field.Forbidden(field.NewPath("spec.hostID"), "hostID can only be set when tenancy is 'host'"))
+	}
+
+	if r.Spec.HostAffinity != nil && *r.Spec.HostAffinity == hostAffinity && r.Spec.Tenancy != hostTenancy {
+		allErrs = append(allErrs, field.Forbidden(field.NewPath("spec.hostAffinity"), "hostAffinity can only be set to 'host' when tenancy is 'host'"))
+	}
+
+	if hasDynamicHostAllocation && r.Spec.Tenancy != hostTenancy {
+		allErrs = append(allErrs, field.Forbidden(field.NewPath("spec.dynamicHostAllocation"), "dynamicHostAllocation can only be set when tenancy is 'host'"))
+	}
+
 	return allErrs
 }
 

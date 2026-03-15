@@ -4,11 +4,18 @@ package v1alpha1
 
 // MachineConfigNodeSpecApplyConfiguration represents a declarative configuration of the MachineConfigNodeSpec type for use
 // with apply.
+//
+// MachineConfigNodeSpec describes the MachineConfigNode we are managing.
 type MachineConfigNodeSpecApplyConfiguration struct {
-	Node            *MCOObjectReferenceApplyConfiguration                        `json:"node,omitempty"`
-	Pool            *MCOObjectReferenceApplyConfiguration                        `json:"pool,omitempty"`
-	ConfigVersion   *MachineConfigNodeSpecMachineConfigVersionApplyConfiguration `json:"configVersion,omitempty"`
-	PinnedImageSets []MachineConfigNodeSpecPinnedImageSetApplyConfiguration      `json:"pinnedImageSets,omitempty"`
+	// node contains a reference to the node for this machine config node.
+	Node *MCOObjectReferenceApplyConfiguration `json:"node,omitempty"`
+	// pool contains a reference to the machine config pool that this machine config node's
+	// referenced node belongs to.
+	Pool *MCOObjectReferenceApplyConfiguration `json:"pool,omitempty"`
+	// configVersion holds the desired config version for the node targeted by this machine config node resource.
+	// The desired version represents the machine config the node will attempt to update to and gets set before the machine config operator validates
+	// the new machine config against the current machine config.
+	ConfigVersion *MachineConfigNodeSpecMachineConfigVersionApplyConfiguration `json:"configVersion,omitempty"`
 }
 
 // MachineConfigNodeSpecApplyConfiguration constructs a declarative configuration of the MachineConfigNodeSpec type for use with
@@ -38,18 +45,5 @@ func (b *MachineConfigNodeSpecApplyConfiguration) WithPool(value *MCOObjectRefer
 // If called multiple times, the ConfigVersion field is set to the value of the last call.
 func (b *MachineConfigNodeSpecApplyConfiguration) WithConfigVersion(value *MachineConfigNodeSpecMachineConfigVersionApplyConfiguration) *MachineConfigNodeSpecApplyConfiguration {
 	b.ConfigVersion = value
-	return b
-}
-
-// WithPinnedImageSets adds the given value to the PinnedImageSets field in the declarative configuration
-// and returns the receiver, so that objects can be build by chaining "With" function invocations.
-// If called multiple times, values provided by each call will be appended to the PinnedImageSets field.
-func (b *MachineConfigNodeSpecApplyConfiguration) WithPinnedImageSets(values ...*MachineConfigNodeSpecPinnedImageSetApplyConfiguration) *MachineConfigNodeSpecApplyConfiguration {
-	for i := range values {
-		if values[i] == nil {
-			panic("nil value passed to WithPinnedImageSets")
-		}
-		b.PinnedImageSets = append(b.PinnedImageSets, *values[i])
-	}
 	return b
 }

@@ -9,7 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	ipamv1 "sigs.k8s.io/cluster-api/exp/ipam/api/v1beta1"
+	ipamv1 "sigs.k8s.io/cluster-api/api/ipam/v1beta1" //nolint:staticcheck //CORS-3563
 	"sigs.k8s.io/yaml"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -31,8 +31,8 @@ import (
 	"github.com/openshift/installer/pkg/asset/rhcos"
 	"github.com/openshift/installer/pkg/types"
 	baremetaltypes "github.com/openshift/installer/pkg/types/baremetal"
-	openstacktypes "github.com/openshift/installer/pkg/types/openstack"
-	vspheretypes "github.com/openshift/installer/pkg/types/vsphere"
+	externaltypes "github.com/openshift/installer/pkg/types/external"
+	nonetypes "github.com/openshift/installer/pkg/types/none"
 	ibmcloudapi "github.com/openshift/machine-api-provider-ibmcloud/pkg/apis"
 	ibmcloudprovider "github.com/openshift/machine-api-provider-ibmcloud/pkg/apis/ibmcloudprovider/v1"
 )
@@ -117,8 +117,8 @@ func (m *Arbiter) Generate(ctx context.Context, dependencies asset.Parents) erro
 	if ic.Arbiter == nil {
 		return nil
 	}
-	if ic.Platform.Name() != baremetaltypes.Name {
-		return fmt.Errorf("only BareMetal platform is supported for Arbiter deployments")
+	if ic.Platform.Name() != baremetaltypes.Name && ic.Platform.Name() != externaltypes.Name && ic.Platform.Name() != nonetypes.Name {
+		return fmt.Errorf("only BareMetal, External, and None platforms are supported for Arbiter deployments")
 	}
 
 	pool := *ic.Arbiter
@@ -127,43 +127,47 @@ func (m *Arbiter) Generate(ctx context.Context, dependencies asset.Parents) erro
 	var ipClaims []ipamv1.IPAddressClaim
 	var ipAddrs []ipamv1.IPAddress
 
-	mpool := defaultBareMetalMachinePoolPlatform()
-	mpool.Set(ic.Platform.BareMetal.DefaultMachinePlatform)
-	mpool.Set(pool.Platform.BareMetal)
-	pool.Platform.BareMetal = &mpool
-
 	// Use managed user data secret, since we always have up to date images
 	// available in the cluster
 	arbiterUserDataSecretName := "arbiter-user-data-managed" // #nosec G101
-	enabledCaps := installConfig.Config.GetEnabledCapabilities()
-	if enabledCaps.Has(configv1.ClusterVersionCapabilityMachineAPI) {
-		machines, err = baremetal.Machines(clusterID.InfraID, ic, &pool, "arbiter", arbiterUserDataSecretName)
-		if err != nil {
-			return fmt.Errorf("failed to create arbiter machine objects: %w", err)
-		}
 
-		hostSettings, err := baremetal.ArbiterHosts(ic, machines, arbiterUserDataSecretName)
-		if err != nil {
-			return fmt.Errorf("failed to assemble host data: %w", err)
-		}
+	// BareMetal-specific: configure machine pool and generate Machine API objects
+	if ic.Platform.BareMetal != nil {
+		mpool := defaultBareMetalMachinePoolPlatform()
+		mpool.Set(ic.Platform.BareMetal.DefaultMachinePlatform)
+		mpool.Set(pool.Platform.BareMetal)
+		pool.Platform.BareMetal = &mpool
 
-		hosts, err := createHostAssetFiles(hostSettings.Hosts, arbiterHostFileName)
-		if err != nil {
-			return err
-		}
-		m.HostFiles = append(m.HostFiles, hosts...)
+		enabledCaps := installConfig.Config.GetEnabledCapabilities()
+		if enabledCaps.Has(configv1.ClusterVersionCapabilityMachineAPI) {
+			machines, err = baremetal.Machines(clusterID.InfraID, ic, &pool, "arbiter", arbiterUserDataSecretName)
+			if err != nil {
+				return fmt.Errorf("failed to create arbiter machine objects: %w", err)
+			}
 
-		secrets, err := createSecretAssetFiles(hostSettings.Secrets, arbiterSecretFileName)
-		if err != nil {
-			return err
-		}
-		m.SecretFiles = append(m.SecretFiles, secrets...)
+			hostSettings, err := baremetal.ArbiterHosts(ic, machines, arbiterUserDataSecretName)
+			if err != nil {
+				return fmt.Errorf("failed to assemble host data: %w", err)
+			}
 
-		networkSecrets, err := createSecretAssetFiles(hostSettings.NetworkConfigSecrets, arbiterNetworkConfigSecretFileName)
-		if err != nil {
-			return err
+			hosts, err := createHostAssetFiles(hostSettings.Hosts, arbiterHostFileName)
+			if err != nil {
+				return err
+			}
+			m.HostFiles = append(m.HostFiles, hosts...)
+
+			secrets, err := createSecretAssetFiles(hostSettings.Secrets, arbiterSecretFileName)
+			if err != nil {
+				return err
+			}
+			m.SecretFiles = append(m.SecretFiles, secrets...)
+
+			networkSecrets, err := createSecretAssetFiles(hostSettings.NetworkConfigSecrets, arbiterNetworkConfigSecretFileName)
+			if err != nil {
+				return err
+			}
+			m.NetworkConfigSecretFiles = append(m.NetworkConfigSecretFiles, networkSecrets...)
 		}
-		m.NetworkConfigSecretFiles = append(m.NetworkConfigSecretFiles, networkSecrets...)
 	}
 
 	data, err := UserDataSecret(arbiterUserDataSecretName, mign.File.Data)
@@ -202,8 +206,7 @@ func (m *Arbiter) Generate(ctx context.Context, dependencies asset.Parents) erro
 	// The maximum number of networks supported on ServiceNetwork is two, one IPv4 and one IPv6 network.
 	// The cluster-network-operator handles the validation of this field.
 	// Reference: https://github.com/openshift/cluster-network-operator/blob/fc3e0e25b4cfa43e14122bdcdd6d7f2585017d75/pkg/network/cluster_config.go#L45-L52
-	if ic.Networking != nil && len(ic.Networking.ServiceNetwork) == 2 &&
-		(ic.Platform.Name() == openstacktypes.Name || ic.Platform.Name() == vspheretypes.Name) {
+	if ic.Networking != nil && len(ic.Networking.ServiceNetwork) == 2 {
 		// Only configure kernel args for dual-stack clusters.
 		ignIPv6, err := machineconfig.ForDualStackAddresses("arbiter")
 		if err != nil {

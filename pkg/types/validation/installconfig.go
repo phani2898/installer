@@ -1,11 +1,13 @@
 package validation
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/url"
 	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -39,12 +41,16 @@ import (
 	gcpvalidation "github.com/openshift/installer/pkg/types/gcp/validation"
 	"github.com/openshift/installer/pkg/types/ibmcloud"
 	ibmcloudvalidation "github.com/openshift/installer/pkg/types/ibmcloud/validation"
+	"github.com/openshift/installer/pkg/types/network"
+	"github.com/openshift/installer/pkg/types/none"
 	"github.com/openshift/installer/pkg/types/nutanix"
 	nutanixvalidation "github.com/openshift/installer/pkg/types/nutanix/validation"
 	"github.com/openshift/installer/pkg/types/openstack"
 	openstackvalidation "github.com/openshift/installer/pkg/types/openstack/validation"
 	"github.com/openshift/installer/pkg/types/ovirt"
 	ovirtvalidation "github.com/openshift/installer/pkg/types/ovirt/validation"
+	"github.com/openshift/installer/pkg/types/powervc"
+	powervcvalidation "github.com/openshift/installer/pkg/types/powervc/validation"
 	"github.com/openshift/installer/pkg/types/powervs"
 	powervsvalidation "github.com/openshift/installer/pkg/types/powervs/validation"
 	"github.com/openshift/installer/pkg/types/vsphere"
@@ -58,6 +64,10 @@ const hostCryptBypassedAnnotation = "install.openshift.io/hostcrypt-check-bypass
 
 // list of known plugins that require hostPrefix to be set
 var pluginsUsingHostPrefix = sets.NewString(string(operv1.NetworkTypeOVNKubernetes))
+
+type imagePullSecret struct {
+	Auths map[string]map[string]interface{} `json:"auths"`
+}
 
 // ValidateInstallConfig checks that the specified install config is valid.
 //
@@ -101,11 +111,17 @@ func ValidateInstallConfig(c *types.InstallConfig, usingAgentMethod bool) field.
 	if c.Platform.GCP != nil || c.Platform.Azure != nil {
 		nameErr = validate.ClusterName1035(c.ObjectMeta.Name)
 	}
-	if c.Platform.VSphere != nil || c.Platform.BareMetal != nil || c.Platform.OpenStack != nil || c.Platform.Nutanix != nil {
+	if c.Platform.VSphere != nil || c.Platform.BareMetal != nil || c.Platform.OpenStack != nil || c.Platform.Nutanix != nil || c.Platform.PowerVC != nil {
 		nameErr = validate.OnPremClusterName(c.ObjectMeta.Name)
 	}
 	if nameErr != nil {
 		allErrs = append(allErrs, field.Invalid(field.NewPath("metadata", "name"), c.ObjectMeta.Name, nameErr.Error()))
+	}
+	// Azure-specific validation for reserved words
+	if c.Platform.Azure != nil {
+		if err := validate.AzureClusterName(c.ObjectMeta.Name); err != nil {
+			allErrs = append(allErrs, field.Invalid(field.NewPath("metadata", "name"), c.ObjectMeta.Name, err.Error()))
+		}
 	}
 	baseDomainErr := validate.DomainName(c.BaseDomain, true)
 	if baseDomainErr != nil {
@@ -134,7 +150,7 @@ func ValidateInstallConfig(c *types.InstallConfig, usingAgentMethod bool) field.
 	}
 
 	if c.Arbiter != nil {
-		if c.EnabledFeatureGates().Enabled(features.FeatureGateHighlyAvailableArbiter) {
+		if c.Enabled(features.FeatureGateHighlyAvailableArbiter) {
 			allErrs = append(allErrs, validateArbiter(&c.Platform, c.Arbiter, c.ControlPlane, field.NewPath("arbiter"))...)
 		} else {
 			allErrs = append(allErrs, field.Forbidden(field.NewPath("arbiter"), fmt.Sprintf("%s feature must be enabled in order to use arbiter cluster deployment", features.FeatureGateHighlyAvailableArbiter)))
@@ -155,11 +171,11 @@ func ValidateInstallConfig(c *types.InstallConfig, usingAgentMethod bool) field.
 	if c.Proxy != nil {
 		allErrs = append(allErrs, validateProxy(c.Proxy, c, field.NewPath("proxy"))...)
 	}
-	allErrs = append(allErrs, validateImageContentSources(c.DeprecatedImageContentSources, field.NewPath("imageContentSources"))...)
+	allErrs = append(allErrs, validateImageContentSources(c.DeprecatedImageContentSources, c.PullSecret, field.NewPath("imageContentSources"))...)
 	if _, ok := validPublishingStrategies[c.Publish]; !ok {
 		allErrs = append(allErrs, field.NotSupported(field.NewPath("publish"), c.Publish, validPublishingStrategyValues))
 	}
-	allErrs = append(allErrs, validateImageDigestSources(c.ImageDigestSources, field.NewPath("imageDigestSources"))...)
+	allErrs = append(allErrs, validateImageDigestSources(c.ImageDigestSources, c.PullSecret, field.NewPath("imageDigestSources"))...)
 	if _, ok := validPublishingStrategies[c.Publish]; !ok {
 		allErrs = append(allErrs, field.NotSupported(field.NewPath("publish"), c.Publish, validPublishingStrategyValues))
 	}
@@ -265,9 +281,19 @@ func ValidateInstallConfig(c *types.InstallConfig, usingAgentMethod bool) field.
 	}
 
 	allErrs = append(allErrs, ValidateFeatureSet(c)...)
+	allErrs = append(allErrs, validateOSImageStream(c)...)
 
 	return allErrs
 }
+
+const (
+	// machine represents the machineNetwork (IP address pools for machines).
+	networkTypeMachine = "machineNetwork"
+	// service represents the serviceNetwork (IP address pools for services).
+	networkTypeService = "serviceNetwork"
+	// cluster represents the clusterNetwork (IP address pools for pods).
+	networkTypeCluster = "clusterNetwork"
+)
 
 // ipAddressType indicates the address types provided for a given field
 type ipAddressType struct {
@@ -291,13 +317,13 @@ func inferIPVersionFromInstallConfig(n *types.Networking) (hasIPv4, hasIPv6 bool
 	}
 	addresses = make(ipNetByField)
 	for _, network := range n.MachineNetwork {
-		addresses["machineNetwork"] = append(addresses["machineNetwork"], network.CIDR)
+		addresses[networkTypeMachine] = append(addresses[networkTypeMachine], network.CIDR)
 	}
 	for _, network := range n.ServiceNetwork {
-		addresses["serviceNetwork"] = append(addresses["serviceNetwork"], network)
+		addresses[networkTypeService] = append(addresses[networkTypeService], network)
 	}
 	for _, network := range n.ClusterNetwork {
-		addresses["clusterNetwork"] = append(addresses["clusterNetwork"], network.CIDR)
+		addresses[networkTypeCluster] = append(addresses[networkTypeCluster], network.CIDR)
 	}
 	presence = make(ipAddressTypeByField)
 	for k, ipnets := range addresses {
@@ -308,7 +334,7 @@ func inferIPVersionFromInstallConfig(n *types.Networking) (hasIPv4, hasIPv6 bool
 				if i == 0 {
 					has.Primary = corev1.IPv4Protocol
 				}
-				if k == "serviceNetwork" {
+				if k == networkTypeService {
 					hasIPv4 = true
 				}
 			} else {
@@ -316,7 +342,7 @@ func inferIPVersionFromInstallConfig(n *types.Networking) (hasIPv4, hasIPv6 bool
 				if i == 0 {
 					has.Primary = corev1.IPv6Protocol
 				}
-				if k == "serviceNetwork" {
+				if k == networkTypeService {
 					hasIPv6 = true
 				}
 			}
@@ -363,24 +389,39 @@ func validateNetworkingIPVersion(n *types.Networking, p *types.Platform) field.E
 		case p.Ovirt != nil:
 		case p.Nutanix != nil:
 		case p.None != nil:
+			// DualStack IPv6 Primary is supported both on None and external platforms
+			allowV6Primary = true
 		case p.External != nil:
+			allowV6Primary = true
+		case p.AWS != nil:
+			// Dualstack is only allowed if platform.aws.ipFamily is set to dual-stack variants
+			if ipFamily := p.AWS.IPFamily; ipFamily.DualStackEnabled() {
+				if ipFamily == network.DualStackIPv6Primary {
+					allowV6Primary = true
+				}
+				break
+			}
+			allErrs = append(allErrs, field.Invalid(field.NewPath("networking"), "DualStack", fmt.Sprintf("dual-stack IPv4/IPv6 can only be specified when platform.aws.ipFamily is %s or %s", network.DualStackIPv4Primary, network.DualStackIPv6Primary)))
 		default:
 			allErrs = append(allErrs, field.Invalid(field.NewPath("networking"), "DualStack", "dual-stack IPv4/IPv6 is not supported for this platform, specify only one type of address"))
 		}
-		for k, v := range presence {
+
+		for _, k := range sortedPresenceKeys(presence) {
+			v := presence[k]
+			// Validate that each network type (machineNetwork, serviceNetwork, clusterNetwork) has both IPv4 and IPv6 CIDRs
 			switch {
 			case v.IPv4 && !v.IPv6:
+				// On AWS, users may not be able to specify an IPv6 machineNetwork in advance.
+				// If the installer creates the VPC, IPv6 CIDR by default is automatically assigned by AWS.
+				if k == networkTypeMachine && p.AWS != nil {
+					break
+				}
 				allErrs = append(allErrs, field.Invalid(field.NewPath("networking", k), strings.Join(ipnetworksToStrings(addresses[k]), ", "), "dual-stack IPv4/IPv6 requires an IPv6 network in this list"))
 			case !v.IPv4 && v.IPv6:
 				allErrs = append(allErrs, field.Invalid(field.NewPath("networking", k), strings.Join(ipnetworksToStrings(addresses[k]), ", "), "dual-stack IPv4/IPv6 requires an IPv4 network in this list"))
 			}
 
-			// FIXME: we should allow either all-networks-IPv4Primary or
-			// all-networks-IPv6Primary, but the latter currently causes
-			// confusing install failures, so block it.
-			if !allowV6Primary && v.IPv4 && v.IPv6 && v.Primary != corev1.IPv4Protocol {
-				allErrs = append(allErrs, field.Invalid(field.NewPath("networking", k), strings.Join(ipnetworksToStrings(addresses[k]), ", "), "IPv4 addresses must be listed before IPv6 addresses"))
-			}
+			allErrs = append(allErrs, validateNetworkEntryOrder(p, v, addresses[k], allowV6Primary, field.NewPath("networking", k))...)
 		}
 
 	case hasIPv6:
@@ -392,6 +433,13 @@ func validateNetworkingIPVersion(n *types.Networking, p *types.Platform) field.E
 		case p.Nutanix != nil:
 		case p.None != nil:
 		case p.External != nil:
+		case p.AWS != nil:
+			// If dual-stack is enabled, there must be both IPv4 and IPv6 service CIDRs
+			if p.AWS.IPFamily.DualStackEnabled() {
+				allErrs = append(allErrs, field.Invalid(field.NewPath("networking", "serviceNetwork"), strings.Join(ipnetworksToStrings(n.ServiceNetwork), ", "), "when installing dual-stack IPv4/IPv6 you must provide two service networks, one for each IP address type"))
+				break
+			}
+			fallthrough
 		case p.Azure != nil && p.Azure.CloudName == azure.StackCloud:
 			allErrs = append(allErrs, field.Invalid(field.NewPath("networking"), "IPv6", "Azure Stack does not support IPv6"))
 		default:
@@ -399,12 +447,56 @@ func validateNetworkingIPVersion(n *types.Networking, p *types.Platform) field.E
 		}
 
 	case hasIPv4:
-		if len(n.ServiceNetwork) > 1 {
-			allErrs = append(allErrs, field.Invalid(field.NewPath("networking", "serviceNetwork"), strings.Join(ipnetworksToStrings(n.ServiceNetwork), ", "), "only one service network can be specified"))
+		switch {
+		case p.AWS != nil:
+			// If dual-stack is enabled, there must be both IPv4 and IPv6 service CIDRs
+			if p.AWS.IPFamily.DualStackEnabled() {
+				allErrs = append(allErrs, field.Invalid(field.NewPath("networking", "serviceNetwork"), strings.Join(ipnetworksToStrings(n.ServiceNetwork), ", "), "when installing dual-stack IPv4/IPv6 you must provide two service networks, one for each IP address type"))
+				break
+			}
+			fallthrough
+		default:
+			if len(n.ServiceNetwork) > 1 {
+				allErrs = append(allErrs, field.Invalid(field.NewPath("networking", "serviceNetwork"), strings.Join(ipnetworksToStrings(n.ServiceNetwork), ", "), "only one service network can be specified"))
+			}
 		}
 
 	default:
 		// we should have a validation error for no specified machineNetwork, serviceNetwork, or clusterNetwork
+	}
+
+	return allErrs
+}
+
+// validateNetworkEntryOrder ensures the order of CIDR entries is correct in networking configurations.
+// - IPv4 primary dual-stack: IPv4 CIDR first in list
+// - IPv6 primary dual-stack: IPv6 CIDR first in list
+// Some platforms have an explicit field to define the dual-stack variant, for example, platform.aws.ipFamily on AWS.
+func validateNetworkEntryOrder(p *types.Platform, ipAddressType ipAddressType, networks []ipnet.IPNet, allowV6Primary bool, fldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+
+	// If missing either IPv4 or IPv6 CIDR, order validation is not applicable
+	// There is an existing validation to ensure both IPv4 and IPv6 CIDRs are available in dual-stack
+	if !ipAddressType.IPv4 || !ipAddressType.IPv6 {
+		return allErrs
+	}
+
+	switch {
+	case p.AWS != nil:
+		ipFamily := p.AWS.IPFamily
+
+		if ipFamily == network.DualStackIPv4Primary && ipAddressType.Primary == corev1.IPv6Protocol {
+			allErrs = append(allErrs, field.Invalid(fldPath, strings.Join(ipnetworksToStrings(networks), ", "), "DualStackIPv4Primary requires an IPv4 network first in this list"))
+		}
+
+		if ipFamily == network.DualStackIPv6Primary && ipAddressType.Primary == corev1.IPv4Protocol {
+			allErrs = append(allErrs, field.Invalid(fldPath, strings.Join(ipnetworksToStrings(networks), ", "), "DualStackIPv6Primary requires an IPv6 network first in this list"))
+		}
+	default:
+		// For platforms that don't support IPv6-primary dual-stack, reject configurations with IPv6 CIDRs listed first.
+		if !allowV6Primary && ipAddressType.Primary != corev1.IPv4Protocol {
+			allErrs = append(allErrs, field.Invalid(fldPath, strings.Join(ipnetworksToStrings(networks), ", "), "IPv4 addresses must be listed before IPv6 addresses"))
+		}
 	}
 
 	return allErrs
@@ -583,10 +675,10 @@ func validateNetworkNotOverlapDefaultOVNSubnets(n *types.Networking, network *ne
 
 	// We only check against OVNKubernetes default subnets.
 	// Any overrides of default subnets is validated in func validateOVNKubernetesConfig.
-	subnetsCheck := func(joinSubnet, transitSubnet, masqueradeSubnet *net.IPNet) {
+	subnetsCheck := func(joinSubnet, transitSubnet, masqueradeSubnet *net.IPNet, ipversion string) {
 		// Join subnet
 		if ovnsubnet, configured := getOVNSubnet(joinSubnet); !configured && validate.DoCIDRsOverlap(network, ovnsubnet) {
-			allErrs = append(allErrs, field.Invalid(fldPath, network.String(), fmt.Sprintf("must not overlap with OVNKubernetes default internal subnet %s", ovnsubnet.String())))
+			allErrs = append(allErrs, field.Invalid(fldPath, network.String(), fmt.Sprintf("must not overlap with OVNKubernetes default internal subnet %s: please run 'openshift-install explain installconfig.networking.ovnKubernetesConfig.%s' for further documentation", ovnsubnet.String(), ipversion)))
 		}
 
 		// Transit subnet
@@ -601,9 +693,9 @@ func validateNetworkNotOverlapDefaultOVNSubnets(n *types.Networking, network *ne
 	}
 
 	if network.IP.To4() != nil {
-		subnetsCheck(validate.OVNIPv4JoinSubnet, validate.OVNIPv4TransitSubnet, validate.OVNIPv4MasqueradeSubnet)
+		subnetsCheck(validate.OVNIPv4JoinSubnet, validate.OVNIPv4TransitSubnet, validate.OVNIPv4MasqueradeSubnet, "ipv4")
 	} else {
-		subnetsCheck(validate.OVNIPv6JoinSubnet, validate.OVNIPv6TransitSubnet, validate.OVNIPv6MasqueradeSubnet)
+		subnetsCheck(validate.OVNIPv6JoinSubnet, validate.OVNIPv6TransitSubnet, validate.OVNIPv6MasqueradeSubnet, "ipv6")
 	}
 
 	return allErrs
@@ -761,14 +853,14 @@ func validateControlPlane(installConfig *types.InstallConfig, fldPath *field.Pat
 		allErrs = append(allErrs, field.Invalid(fldPath.Child("replicas"), pool.Replicas, "number of control plane replicas must be positive"))
 	}
 	allErrs = append(allErrs, ValidateMachinePool(platform, pool, fldPath)...)
-	allErrs = append(allErrs, validateFencingCredentials(installConfig)...)
+	allErrs = append(allErrs, validateFencingCredentialsAndPlatform(installConfig)...)
 	return allErrs
 }
 
 func validateArbiter(platform *types.Platform, arbiterPool, masterPool *types.MachinePool, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
-	if platform != nil && platform.BareMetal == nil {
-		allErrs = append(allErrs, field.NotSupported(fldPath.Child("platform"), platform.Name(), []string{baremetal.Name}))
+	if platform != nil && platform.BareMetal == nil && platform.External == nil && platform.None == nil {
+		allErrs = append(allErrs, field.NotSupported(fldPath.Child("platform"), platform.Name(), []string{baremetal.Name, external.Name, none.Name}))
 	}
 	if arbiterPool.Name != types.MachinePoolArbiterRoleName {
 		allErrs = append(allErrs, field.NotSupported(fldPath.Child("name"), arbiterPool.Name, []string{types.MachinePoolArbiterRoleName}))
@@ -794,9 +886,9 @@ func validateComputeEdge(platform *types.Platform, pName string, fldPath *field.
 
 func validateCompute(platform *types.Platform, control *types.MachinePool, pools []types.MachinePool, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
-	// Multi Arch is enabled by default for AWS and GCP, these are also the only
-	// two valid platforms for multi arch installations.
-	isMultiArchEnabled := platform.AWS != nil || platform.GCP != nil
+	// Multi Arch is enabled by default for AWS, GCP, and Baremetal, these are also the only
+	// three valid platforms for multi arch installations.
+	isMultiArchEnabled := platform.AWS != nil || platform.GCP != nil || platform.BareMetal != nil
 	poolNames := map[string]bool{}
 	for i, p := range pools {
 		poolFldPath := fldPath.Index(i)
@@ -815,6 +907,20 @@ func validateCompute(platform *types.Platform, control *types.MachinePool, pools
 		if control != nil && control.Architecture != p.Architecture && !isMultiArchEnabled {
 			allErrs = append(allErrs, field.Invalid(poolFldPath.Child("architecture"), p.Architecture, "heteregeneous multi-arch is not supported; compute pool architecture must match control plane"))
 		}
+
+		// We only allow multi arch on baremetal when the control plane is x86 and compute is arm64.
+		if control != nil && platform.BareMetal != nil {
+			if control.Architecture != p.Architecture {
+				if control.Architecture != types.ArchitectureAMD64 {
+					allErrs = append(allErrs, field.Invalid(poolFldPath.Child("architecture"), control.Architecture, "on multi-arch baremetal, the control plane must be amd64"))
+				}
+
+				if p.Architecture != types.ArchitectureARM64 {
+					allErrs = append(allErrs, field.Invalid(poolFldPath.Child("architecture"), p.Architecture, "on baremetal with amd64 control plane, compute must be amd64 or arm64"))
+				}
+			}
+		}
+
 		allErrs = append(allErrs, ValidateMachinePool(platform, &p, poolFldPath)...)
 
 		if p.Fencing != nil {
@@ -1092,7 +1198,8 @@ func validatePlatform(platform *types.Platform, usingAgentMethod bool, fldPath *
 		allErrs = append(allErrs, field.Invalid(fldPath, activePlatform, fmt.Sprintf("must specify one of the platforms (%s)", strings.Join(platforms, ", "))))
 	}
 	validate := func(n string, value interface{}, validation func(*field.Path) field.ErrorList) {
-		if n != activePlatform {
+		// PowerVC is a thin platform which also uses OpenStack
+		if n != activePlatform && n != powervc.Name && activePlatform != powervc.Name {
 			allErrs = append(allErrs, field.Invalid(fldPath, activePlatform, fmt.Sprintf("must only specify a single type of platform; cannot use both %q and %q", activePlatform, n)))
 		}
 		allErrs = append(allErrs, validation(fldPath.Child(n))...)
@@ -1112,6 +1219,11 @@ func validatePlatform(platform *types.Platform, usingAgentMethod bool, fldPath *
 	}
 	if platform.IBMCloud != nil {
 		validate(ibmcloud.Name, platform.IBMCloud, func(f *field.Path) field.ErrorList { return ibmcloudvalidation.ValidatePlatform(platform.IBMCloud, f) })
+	}
+	if platform.PowerVC != nil {
+		validate(powervc.Name, platform.PowerVC, func(f *field.Path) field.ErrorList {
+			return powervcvalidation.ValidatePlatform(platform.PowerVC, f)
+		})
 	}
 	if platform.OpenStack != nil {
 		validate(openstack.Name, platform.OpenStack, func(f *field.Path) field.ErrorList {
@@ -1187,8 +1299,11 @@ func validateProxy(p *types.Proxy, c *types.InstallConfig, fldPath *field.Path) 
 	return allErrs
 }
 
-func validateImageContentSources(groups []types.ImageContentSource, fldPath *field.Path) field.ErrorList {
+func validateImageContentSources(groups []types.ImageContentSource, pullSecret string, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
+
+	var allMirrors []string
+
 	for gidx, group := range groups {
 		groupf := fldPath.Index(gidx)
 		if err := validateNamedRepository(group.Source); err != nil {
@@ -1200,13 +1315,19 @@ func validateImageContentSources(groups []types.ImageContentSource, fldPath *fie
 				allErrs = append(allErrs, field.Invalid(groupf.Child("mirrors").Index(midx), mirror, err.Error()))
 				continue
 			}
+
+			allMirrors = append(allMirrors, mirror)
 		}
 	}
+	allErrs = append(allErrs, validateMirrorCredentials(allMirrors, pullSecret)...)
 	return allErrs
 }
 
-func validateImageDigestSources(groups []types.ImageDigestSource, fldPath *field.Path) field.ErrorList {
+func validateImageDigestSources(groups []types.ImageDigestSource, pullSecret string, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
+
+	var allMirrors []string
+
 	for gidx, group := range groups {
 		groupf := fldPath.Index(gidx)
 		if err := validateNamedRepository(group.Source); err != nil {
@@ -1218,9 +1339,29 @@ func validateImageDigestSources(groups []types.ImageDigestSource, fldPath *field
 				allErrs = append(allErrs, field.Invalid(groupf.Child("mirrors").Index(midx), mirror, err.Error()))
 				continue
 			}
+
+			allMirrors = append(allMirrors, mirror)
+		}
+		if group.SourcePolicy != "" {
+			if len(group.Mirrors) == 0 {
+				allErrs = append(allErrs, field.Invalid(groupf.Child("sourcePolicy"), group.SourcePolicy, "sourcePolicy cannot be configured without a mirror"))
+			}
+			if err := validateImageMirrorSourcePolicy(group.SourcePolicy); err != nil {
+				allErrs = append(allErrs, field.Invalid(groupf.Child("sourcePolicy"), group.SourcePolicy, err.Error()))
+			}
 		}
 	}
+	allErrs = append(allErrs, validateMirrorCredentials(allMirrors, pullSecret)...)
 	return allErrs
+}
+
+func validateImageMirrorSourcePolicy(sourcePolicy configv1.MirrorSourcePolicy) error {
+	switch sourcePolicy {
+	case configv1.NeverContactSource, configv1.AllowContactingSource:
+		return nil
+	default:
+		return fmt.Errorf("supported values are %q and %q", configv1.NeverContactSource, configv1.AllowContactingSource)
+	}
 }
 
 func validateNamedRepository(r string) error {
@@ -1282,12 +1423,14 @@ func validateCloudCredentialsMode(mode types.CredentialsMode, fldPath *field.Pat
 	// validPlatformCredentialsModes is a map from the platform name to a slice of credentials modes that are valid
 	// for the platform. If a platform name is not in the map, then the credentials mode cannot be set for that platform.
 	validPlatformCredentialsModes := map[string][]types.CredentialsMode{
-		aws.Name:      {types.MintCredentialsMode, types.PassthroughCredentialsMode, types.ManualCredentialsMode},
-		azure.Name:    allowedAzureModes,
-		gcp.Name:      {types.MintCredentialsMode, types.PassthroughCredentialsMode, types.ManualCredentialsMode},
-		ibmcloud.Name: {types.ManualCredentialsMode},
-		powervs.Name:  {types.ManualCredentialsMode},
-		nutanix.Name:  {types.ManualCredentialsMode},
+		aws.Name:       {types.MintCredentialsMode, types.PassthroughCredentialsMode, types.ManualCredentialsMode},
+		azure.Name:     allowedAzureModes,
+		gcp.Name:       {types.MintCredentialsMode, types.PassthroughCredentialsMode, types.ManualCredentialsMode},
+		openstack.Name: {types.PassthroughCredentialsMode},
+		ibmcloud.Name:  {types.ManualCredentialsMode},
+		powervc.Name:   {types.PassthroughCredentialsMode},
+		powervs.Name:   {types.ManualCredentialsMode},
+		nutanix.Name:   {types.ManualCredentialsMode},
 	}
 	if validModes, ok := validPlatformCredentialsModes[platform.Name()]; ok {
 		validModesSet := sets.NewString()
@@ -1427,15 +1570,14 @@ func validateAdditionalCABundlePolicy(c *types.InstallConfig) error {
 func ValidateFeatureSet(c *types.InstallConfig) field.ErrorList {
 	allErrs := field.ErrorList{}
 
-	clusterProfile := types.GetClusterProfileName()
-	featureSets, ok := features.AllFeatureSets()[clusterProfile]
+	featureSets, ok := types.FeatureSetsForProfile()
 	if !ok {
-		logrus.Warnf("no feature sets for cluster profile %q", clusterProfile)
+		logrus.Warnf("no feature sets for cluster profile %q", types.GetClusterProfileName())
 	}
 	if _, ok := featureSets[c.FeatureSet]; c.FeatureSet != configv1.CustomNoUpgrade && !ok {
 		sortedFeatureSets := func() []string {
 			v := []string{}
-			for n := range features.AllFeatureSets()[clusterProfile] {
+			for n := range featureSets {
 				v = append(v, string(n))
 			}
 			// Add CustomNoUpgrade since it is not part of features sets for profiles
@@ -1444,6 +1586,11 @@ func ValidateFeatureSet(c *types.InstallConfig) field.ErrorList {
 			return v
 		}()
 		allErrs = append(allErrs, field.NotSupported(field.NewPath("featureSet"), c.FeatureSet, sortedFeatureSets))
+	}
+
+	// Validate that OKD featureset is only used with SCOS-compiled installer
+	if c.FeatureSet == configv1.OKD && !c.IsSCOS() {
+		allErrs = append(allErrs, field.Forbidden(field.NewPath("featureSet"), "OKD featureset is not supported on OpenShift clusters"))
 	}
 
 	if len(c.FeatureGates) > 0 {
@@ -1497,6 +1644,12 @@ func validateGatedFeatures(c *types.InstallConfig) field.ErrorList {
 		gatedFeatures = append(gatedFeatures, awsvalidation.GatedFeatures(c)...)
 	case c.Azure != nil:
 		gatedFeatures = append(gatedFeatures, azurevalidation.GatedFeatures(c)...)
+	case c.BareMetal != nil:
+		gatedFeatures = append(gatedFeatures, baremetalvalidation.GatedFeatures(c)...)
+	case c.Nutanix != nil:
+		gatedFeatures = append(gatedFeatures, nutanixvalidation.GatedFeatures(c)...)
+	case c.OpenStack != nil:
+		gatedFeatures = append(gatedFeatures, openstackvalidation.GatedFeatures(c)...)
 	}
 
 	if c.ControlPlane != nil {
@@ -1607,7 +1760,7 @@ func validateCredentialsNumber(installConfig *types.InstallConfig, fencing *type
 	return errs
 }
 
-func validateFencingCredentials(installConfig *types.InstallConfig) (errors field.ErrorList) {
+func validateFencingCredentialsAndPlatform(installConfig *types.InstallConfig) (errors field.ErrorList) {
 	fldPath := field.NewPath("controlPlane", "fencing")
 	fencingCredentials := installConfig.ControlPlane.Fencing
 	allErrs := field.ErrorList{}
@@ -1619,6 +1772,7 @@ func validateFencingCredentials(installConfig *types.InstallConfig) (errors fiel
 			if len(credential.CertificateVerification) > 0 && credential.CertificateVerification != types.CertificateVerificationDisabled && credential.CertificateVerification != types.CertificateVerificationEnabled {
 				allErrs = append(allErrs, field.Invalid(fldPath.Child("credentials").Index(i).Key("CertificateVerification"), installConfig.ControlPlane.Fencing.Credentials[i].CertificateVerification, fmt.Sprintf("invalid certificate verification; %q should set to one of the following: ['Enabled' (default), 'Disabled']", credential.CertificateVerification)))
 			}
+			allErrs = append(allErrs, validateFencingCredentialAddress(credential.Address, fldPath.Child("credentials").Index(i).Child("address"))...)
 		}
 	}
 	allErrs = append(allErrs, validateCredentialsNumber(installConfig, fencingCredentials, fldPath.Child("credentials"))...)
@@ -1637,6 +1791,60 @@ func validateFencingForPlatform(config *types.InstallConfig, fldPath *field.Path
 	return errs
 }
 
+func validateOSImageStream(config *types.InstallConfig) field.ErrorList {
+	errs := field.ErrorList{}
+	if len(config.OSImageStream) != 0 && config.IsSCOS() {
+		errs = append(errs, field.Forbidden(field.NewPath("osImageStream"), "OS Image Streams are only supported on OCP clusters using RHCOS"))
+	}
+
+	supportedValues := []string{string(types.OSImageStreamRHCOS9), string(types.OSImageStreamRHCOS10)}
+	if config.OSImageStream != "" && !slices.Contains(supportedValues, string(config.OSImageStream)) {
+		errs = append(errs,
+			field.Forbidden(
+				field.NewPath("osImageStream"),
+				fmt.Sprintf("Unsupported OS Image Stream. Supported values are: %s", strings.Join(supportedValues, ", ")),
+			))
+	}
+	return errs
+}
+
+func validateFencingCredentialAddress(address string, fldPath *field.Path) field.ErrorList {
+	errs := field.ErrorList{}
+	if address == "" {
+		return errs
+	}
+
+	// Parse the URL to ensure it's a valid URL
+	parsedURL, err := url.Parse(address)
+	if err != nil {
+		errs = append(errs, field.Invalid(fldPath, address, fmt.Sprintf("invalid URL format: %v", err)))
+		return errs
+	}
+
+	// Check if the address contains "redfish"
+	if !strings.Contains(address, "redfish") {
+		errs = append(errs, field.Invalid(fldPath, address, "fencing only supports redfish-compatible BMC addresses, IPMI is not supported"))
+	}
+
+	// Validate port - try to infer standard schema ports for https/http, otherwise notify user port is needed
+	// Vendor-specific redfish schemes (idrac-redfish, ilo5-redfish, etc.) default to HTTPS (port 443)
+	redfishPort := parsedURL.Port()
+	if redfishPort == "" {
+		switch {
+		case strings.Contains(parsedURL.Scheme, "https"):
+			// Port 443 is default for https, so it's acceptable
+		case strings.Contains(parsedURL.Scheme, "http"):
+			// Port 80 is default for http, so it's acceptable
+		case strings.Contains(parsedURL.Scheme, "redfish"):
+			// Vendor-specific redfish schemes (idrac-redfish, ilo5-redfish, etc.) use HTTPS by default
+		default:
+			errs = append(errs, field.Invalid(fldPath, address, "failed to parse redfish address, no port number found"))
+		}
+	}
+
+	return errs
+}
+
 // sortedPresenceKeys returns map keys in sorted order for consistent error messages.
 func sortedPresenceKeys(presence ipAddressTypeByField) []string {
 	keys := make([]string, 0, len(presence))
@@ -1645,4 +1853,52 @@ func sortedPresenceKeys(presence ipAddressTypeByField) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// validateMirrorCredentials checks if mirror registry hosts are present in the pull secret.
+func validateMirrorCredentials(mirrors []string, pullSecret string) field.ErrorList {
+	allErrs := field.ErrorList{}
+
+	var ps imagePullSecret
+	if err := validate.ImagePullSecret(pullSecret); err != nil {
+		return allErrs
+	}
+	if err := json.Unmarshal([]byte(pullSecret), &ps); err != nil {
+		return allErrs
+	}
+
+	missingHosts := sets.New[string]()
+	for _, mirror := range mirrors {
+		mirrorHost, err := extractRegistryHost(mirror)
+		if err != nil {
+			continue // Skip if we can't extract the host
+		}
+		if _, found := ps.Auths[mirrorHost]; !found {
+			missingHosts.Insert(mirrorHost)
+		}
+	}
+
+	for host := range missingHosts {
+		// Log warnings for registries without credentials
+		logrus.Warnf("Mirror registry %q is not found in pullSecret", host)
+	}
+
+	return allErrs
+}
+
+// extractRegistryHost extracts the registry host (with port if any) from a repository string.
+// For example: "registry.example.com:5000/namespace/repo" -> "registry.example.com:5000".
+// Returns an error if the repository string cannot be parsed as either a named reference or a host.
+func extractRegistryHost(repository string) (string, error) {
+	ref, err := dockerref.ParseNamed(repository)
+	if err != nil {
+		// ErrNameNotCanonical indicates the input is not a fully-qualified repository reference
+		// (e.g., "registry.example.com:5000" without a path, or short names like "ocp/release").
+		// In these cases, return the input as-is.
+		if errors.Is(err, dockerref.ErrNameNotCanonical) {
+			return repository, nil
+		}
+		return "", err
+	}
+	return dockerref.Domain(ref), nil
 }

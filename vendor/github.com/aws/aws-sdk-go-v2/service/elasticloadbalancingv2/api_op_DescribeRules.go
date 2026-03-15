@@ -12,7 +12,7 @@ import (
 )
 
 // Describes the specified rules or the rules for the specified listener. You must
-// specify either a listener or one or more rules.
+// specify either a listener or rules.
 func (c *Client) DescribeRules(ctx context.Context, params *DescribeRulesInput, optFns ...func(*Options)) (*DescribeRulesOutput, error) {
 	if params == nil {
 		params = &DescribeRulesInput{}
@@ -125,6 +125,9 @@ func (c *Client) addOperationDescribeRulesMiddlewares(stack *middleware.Stack, o
 	if err = addUserAgentRetryMode(stack, options); err != nil {
 		return err
 	}
+	if err = addCredentialSource(stack, options); err != nil {
+		return err
+	}
 	if err = stack.Initialize.Add(newServiceMetadataMiddleware_opDescribeRules(options.Region), middleware.Before); err != nil {
 		return err
 	}
@@ -143,16 +146,13 @@ func (c *Client) addOperationDescribeRulesMiddlewares(stack *middleware.Stack, o
 	if err = addDisableHTTPSMiddleware(stack, options); err != nil {
 		return err
 	}
-	if err = addSpanInitializeStart(stack); err != nil {
+	if err = addInterceptBeforeRetryLoop(stack, options); err != nil {
 		return err
 	}
-	if err = addSpanInitializeEnd(stack); err != nil {
+	if err = addInterceptAttempt(stack, options); err != nil {
 		return err
 	}
-	if err = addSpanBuildRequestStart(stack); err != nil {
-		return err
-	}
-	if err = addSpanBuildRequestEnd(stack); err != nil {
+	if err = addInterceptors(stack, options); err != nil {
 		return err
 	}
 	return nil

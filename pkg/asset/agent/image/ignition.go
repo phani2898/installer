@@ -1,20 +1,21 @@
 package image
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"html/template"
 	"net"
-	"net/url"
+	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/coreos/ignition/v2/config/util"
 	igntypes "github.com/coreos/ignition/v2/config/v3_2/types"
 	"github.com/coreos/stream-metadata-go/arch"
-	"github.com/coreos/stream-metadata-go/stream"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v2"
@@ -35,6 +36,7 @@ import (
 	"github.com/openshift/installer/pkg/asset/ignition"
 	"github.com/openshift/installer/pkg/asset/ignition/bootstrap"
 	"github.com/openshift/installer/pkg/asset/password"
+	"github.com/openshift/installer/pkg/asset/rhcos"
 	"github.com/openshift/installer/pkg/asset/tls"
 	"github.com/openshift/installer/pkg/types"
 	"github.com/openshift/installer/pkg/types/agent"
@@ -85,6 +87,7 @@ type agentTemplateData struct {
 	TokenExpiry               string
 	AuthType                  string
 	CaBundleMount             string
+	DisableImagePolicy        bool
 }
 
 // Name returns the human-friendly name of the asset.
@@ -101,6 +104,7 @@ func (a *Ignition) Dependencies() []asset.Asset {
 		&joiner.ImportClusterConfig{},
 		&manifests.AgentManifests{},
 		&manifests.ExtraManifests{},
+		&agentconfig.FencingCredentials{},
 		&tls.KubeAPIServerLBSignerCertKey{},
 		&tls.KubeAPIServerLocalhostSignerCertKey{},
 		&tls.KubeAPIServerServiceNetworkSignerCertKey{},
@@ -122,9 +126,11 @@ func (a *Ignition) Generate(ctx context.Context, dependencies asset.Parents) err
 	agentConfigAsset := &agentconfig.AgentConfig{}
 	agentHostsAsset := &agentconfig.AgentHosts{}
 	extraManifests := &manifests.ExtraManifests{}
+	fencingCredentials := &agentconfig.FencingCredentials{}
 	authConfig := &gencrypto.AuthConfig{}
 	infraEnvAsset := &common.InfraEnvID{}
-	dependencies.Get(agentManifests, agentConfigAsset, agentHostsAsset, extraManifests, authConfig, agentWorkflow, infraEnvAsset)
+	dependencies.Get(agentManifests, agentConfigAsset, agentHostsAsset, extraManifests, fencingCredentials, authConfig, agentWorkflow, infraEnvAsset)
+	clusterInfo := &joiner.ClusterInfo{}
 
 	if err := workflowreport.GetReport(ctx).Stage(workflow.StageIgnition); err != nil {
 		return err
@@ -161,7 +167,6 @@ func (a *Ignition) Generate(ctx context.Context, dependencies asset.Parents) err
 	enabledServices := getDefaultEnabledServices()
 	openshiftVersion := ""
 	var err error
-	var streamGetter CoreOSBuildFetcher
 
 	switch agentWorkflow.Workflow {
 	case workflow.AgentWorkflowTypeInstall:
@@ -189,10 +194,8 @@ func (a *Ignition) Generate(ctx context.Context, dependencies asset.Parents) err
 		if err != nil {
 			return err
 		}
-		streamGetter = DefaultCoreOSStreamGetter
 
 	case workflow.AgentWorkflowTypeAddNodes:
-		clusterInfo := &joiner.ClusterInfo{}
 		addNodesConfig := &joiner.AddNodesConfig{}
 		importClusterConfig := &joiner.ImportClusterConfig{}
 		dependencies.Get(clusterInfo, addNodesConfig, importClusterConfig)
@@ -219,9 +222,6 @@ func (a *Ignition) Generate(ctx context.Context, dependencies asset.Parents) err
 
 		// Version matches the source cluster one
 		openshiftVersion = clusterInfo.Version
-		streamGetter = func(ctx context.Context) (*stream.Stream, error) {
-			return clusterInfo.OSImage, nil
-		}
 		// If defined, add the ignition endpoints
 		if err := addDay2ClusterConfigFiles(&config, *clusterInfo, *importClusterConfig); err != nil {
 			return err
@@ -270,7 +270,7 @@ func (a *Ignition) Generate(ctx context.Context, dependencies asset.Parents) err
 	infraEnvID := infraEnvAsset.ID
 	logrus.Debug("Generated random infra-env id ", infraEnvID)
 
-	osImage, err := getOSImagesInfo(archName, openshiftVersion, streamGetter)
+	osImage, err := getOSImagesInfo(ctx, archName, openshiftVersion, customStreamGetter(agentWorkflow, clusterInfo))
 	if err != nil {
 		return err
 	}
@@ -306,7 +306,7 @@ func (a *Ignition) Generate(ctx context.Context, dependencies asset.Parents) err
 
 	rendezvousHostFile := ignition.FileFromString(rendezvousHostEnvPath,
 		"root", 0644,
-		getRendezvousHostEnv(agentTemplateData.ServiceProtocol, a.RendezvousIP, authConfig.AgentAuthToken, authConfig.UserAuthToken, agentWorkflow.Workflow))
+		getRendezvousHostEnv(agentTemplateData, a.RendezvousIP, agentWorkflow.Workflow))
 	config.Storage.Files = append(config.Storage.Files, rendezvousHostFile)
 
 	err = addBootstrapScripts(&config, agentManifests.ClusterImageSet.Spec.ReleaseImage)
@@ -316,14 +316,14 @@ func (a *Ignition) Generate(ctx context.Context, dependencies asset.Parents) err
 
 	// add ZTP manifests to manifestPath
 	for _, file := range agentManifests.FileList {
-		manifestFile := ignition.FileFromBytes(filepath.Join(manifestPath, filepath.Base(file.Filename)),
+		manifestFile := ignition.FileFromBytes(path.Join(manifestPath, filepath.Base(file.Filename)),
 			"root", 0600, file.Data)
 		config.Storage.Files = append(config.Storage.Files, manifestFile)
 	}
 
 	// add AgentConfig if provided
 	if agentConfigAsset.Config != nil {
-		agentConfigFile := ignition.FileFromBytes(filepath.Join(manifestPath, filepath.Base(agentConfigAsset.File.Filename)),
+		agentConfigFile := ignition.FileFromBytes(path.Join(manifestPath, filepath.Base(agentConfigAsset.File.Filename)),
 			"root", 0600, agentConfigAsset.File.Data)
 		config.Storage.Files = append(config.Storage.Files, agentConfigFile)
 	}
@@ -354,6 +354,8 @@ func (a *Ignition) Generate(ctx context.Context, dependencies asset.Parents) err
 		return err
 	}
 
+	addFencingCredentials(&config, fencingCredentials)
+
 	err = addExtraManifests(&config, extraManifests)
 	if err != nil {
 		return err
@@ -370,11 +372,13 @@ func (a *Ignition) Generate(ctx context.Context, dependencies asset.Parents) err
 
 func getDefaultEnabledServices() []string {
 	return []string{
+		"agent-extract-tui.service",
 		"agent-interactive-console.service",
 		"agent-interactive-console-serial@.service",
 		"agent-register-cluster.service",
 		"agent-import-cluster.service",
 		"agent-register-infraenv.service",
+		"agent-ui.service",
 		"agent.service",
 		"assisted-service-db.service",
 		"assisted-service-pod.service",
@@ -414,6 +418,24 @@ func addBootstrapScripts(config *igntypes.Config, releaseImage string) (err erro
 	return nil
 }
 
+// shouldDisableImagePolicy checks the OPENSHIFT_INSTALL_EXPERIMENTAL_DISABLE_IMAGE_POLICY
+// environment variable and returns true only if it's explicitly set to a boolean true value.
+// This experimental flag allows bypassing image policy validation for testing purposes.
+func shouldDisableImagePolicy() bool {
+	val, ok := os.LookupEnv("OPENSHIFT_INSTALL_EXPERIMENTAL_DISABLE_IMAGE_POLICY")
+	if !ok {
+		return false
+	}
+	parsed, err := strconv.ParseBool(val)
+	if err != nil {
+		return false
+	}
+	if parsed {
+		logrus.Warn("OPENSHIFT_INSTALL_EXPERIMENTAL_DISABLE_IMAGE_POLICY is set to true, will pass to assisted-service container")
+	}
+	return parsed
+}
+
 func getTemplateData(name, pullSecret, releaseImageList, releaseImage, releaseImageMirror, publicContainerRegistries,
 	imageTypeISO, infraEnvID, publicKey, authType, agentAuthToken, userAuthToken, watcherAuthToken, tokenExpiry, caBundleMount string,
 	haveMirrorConfig bool,
@@ -443,20 +465,16 @@ func getTemplateData(name, pullSecret, releaseImageList, releaseImage, releaseIm
 		WatcherAuthToken:          watcherAuthToken,
 		TokenExpiry:               tokenExpiry,
 		CaBundleMount:             caBundleMount,
+		DisableImagePolicy:        shouldDisableImagePolicy(),
 	}
 }
 
-func getRendezvousHostEnv(serviceProtocol, nodeZeroIP, agentAuthtoken, userAuthToken string, workflowType workflow.AgentWorkflowType) string {
-	serviceBaseURL := url.URL{
-		Scheme: serviceProtocol,
-		Host:   net.JoinHostPort(nodeZeroIP, "8090"),
-		Path:   "/",
-	}
-	imageServiceBaseURL := url.URL{
-		Scheme: serviceProtocol,
-		Host:   net.JoinHostPort(nodeZeroIP, "8888"),
-		Path:   "/",
-	}
+func getRendezvousHostEnvTemplate(data *agentTemplateData, workflowType workflow.AgentWorkflowType) string {
+	host := "{{ if $isIPv6 }}{{ printf \"[%s]\" .RendezvousIP }}{{ else }}{{ .RendezvousIP }}{{ end }}"
+	serviceBaseURL := fmt.Sprintf("%s://%s:8090/", data.ServiceProtocol, host)
+	imageServiceBaseURL := fmt.Sprintf("%s://%s:8888/", data.ServiceProtocol, host)
+	uiBaseURL := fmt.Sprintf("%s://%s:3001/", data.ServiceProtocol, host)
+
 	// USER_AUTH_TOKEN is required to authenticate API requests against agent-installer-local auth type
 	// and for the endpoints marked with userAuth security definition in assisted-service swagger.yaml.
 	// PULL_SECRET_TOKEN contains the AGENT_AUTH_TOKEN and is required for the endpoints marked with agentAuth security definition in assisted-service swagger.yaml.
@@ -469,27 +487,40 @@ func getRendezvousHostEnv(serviceProtocol, nodeZeroIP, agentAuthtoken, userAuthT
 	// and ensure successful authentication.
 	// In the absence of PULL_SECRET_TOKEN, the cluster installation will wait forever.
 
-	rendezvousHostEnv := fmt.Sprintf(`NODE_ZERO_IP=%s
+	rendezvousHostEnvTemplate := fmt.Sprintf(`#{{ $isIPv6 := false }}{{ $host := .RendezvousIP }}{{ range ( len .RendezvousIP ) }}{{if eq ( index ( slice $host . ) 0 ) ':'}}{{ $isIPv6 = true }}{{ end }}{{ end }}
+NODE_ZERO_IP={{.RendezvousIP}}
 SERVICE_BASE_URL=%s
 IMAGE_SERVICE_BASE_URL=%s
 PULL_SECRET_TOKEN=%s
 USER_AUTH_TOKEN=%s
 WORKFLOW_TYPE=%s
-`, nodeZeroIP, serviceBaseURL.String(), imageServiceBaseURL.String(), agentAuthtoken, userAuthToken, workflowType)
-
-	if workflowType == workflow.AgentWorkflowTypeInstallInteractiveDisconnected {
-		uiBaseURL := url.URL{
-			Scheme: serviceProtocol,
-			Host:   net.JoinHostPort(nodeZeroIP, "3001"),
-			Path:   "/",
-		}
-		uiEnv := fmt.Sprintf(`AIUI_APP_API_URL=%s
+AIUI_APP_API_URL=%s
 AIUI_URL=%s
-`, serviceBaseURL.String(), uiBaseURL.String())
-		rendezvousHostEnv = fmt.Sprintf("%s%s", rendezvousHostEnv, uiEnv)
-	}
+`, serviceBaseURL, imageServiceBaseURL, data.AgentAuthToken, data.UserAuthToken, workflowType, serviceBaseURL, uiBaseURL)
 
-	return rendezvousHostEnv
+	return rendezvousHostEnvTemplate
+}
+
+func getRendezvousHostEnvFromTemplate(hostEnvTemplate, nodeZeroIP string) (string, error) {
+	tmpl, err := template.New("rendezvous-host.env").Parse(hostEnvTemplate)
+	if err != nil {
+		return "", err
+	}
+	buf := &bytes.Buffer{}
+	if err := tmpl.Execute(buf, struct{ RendezvousIP string }{nodeZeroIP}); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
+}
+
+func getRendezvousHostEnv(data *agentTemplateData, nodeZeroIP string, workflowType workflow.AgentWorkflowType) string {
+	env, err := getRendezvousHostEnvFromTemplate(
+		getRendezvousHostEnvTemplate(data, workflowType),
+		nodeZeroIP)
+	if err != nil {
+		panic(err)
+	}
+	return env
 }
 
 func getAddNodesEnv(clusterInfo joiner.ClusterInfo, authTokenExpiry string) string {
@@ -588,7 +619,7 @@ func addMacAddressToHostnameMappings(
 	}
 	for _, host := range agentHostsAsset.Hosts {
 		if host.Hostname != "" {
-			file := ignition.FileFromBytes(filepath.Join(hostnamesPath,
+			file := ignition.FileFromBytes(path.Join(hostnamesPath,
 				strings.ToLower(filepath.Base(host.Interfaces[0].MacAddress))),
 				"root", 0600, []byte(host.Hostname))
 			config.Storage.Files = append(config.Storage.Files, file)
@@ -602,11 +633,27 @@ func addHostConfig(config *igntypes.Config, agentHosts *agentconfig.AgentHosts) 
 		return err
 	}
 
-	for path, content := range confs {
-		hostConfigFile := ignition.FileFromBytes(filepath.Join("/etc/assisted/hostconfig", path), "root", 0644, content)
+	for pathName, content := range confs {
+		hostConfigFile := ignition.FileFromBytes(path.Join("/etc/assisted/hostconfig", pathName), "root", 0644, content)
 		config.Storage.Files = append(config.Storage.Files, hostConfigFile)
 	}
 	return nil
+}
+
+// addFencingCredentials adds the fencing credentials file to the ignition config.
+// Fencing credentials are host-scoped (matched by hostname), so they go under /etc/assisted/hostconfig/
+// rather than /etc/assisted/manifests/ which is for cluster-scoped manifests.
+func addFencingCredentials(config *igntypes.Config, fencingCredentials *agentconfig.FencingCredentials) {
+	if fencingCredentials == nil || fencingCredentials.File == nil {
+		return
+	}
+
+	fencingFile := ignition.FileFromBytes(
+		path.Join("/etc/assisted/hostconfig", "fencing-credentials.yaml"),
+		"root", 0644,
+		fencingCredentials.File.Data,
+	)
+	config.Storage.Files = append(config.Storage.Files, fencingFile)
 }
 
 func addDay2ClusterConfigFiles(config *igntypes.Config, clusterInfo joiner.ClusterInfo, importClusterConfig joiner.ImportClusterConfig) error {
@@ -701,26 +748,17 @@ func addExtraManifests(config *igntypes.Config, extraManifests *manifests.ExtraM
 	return nil
 }
 
-func getOSImagesInfo(cpuArch string, openshiftVersion string, streamGetter CoreOSBuildFetcher) (*models.OsImage, error) {
-	st, err := streamGetter(context.Background())
-	if err != nil {
-		return nil, err
-	}
-
+func getOSImagesInfo(ctx context.Context, cpuArch string, openshiftVersion string, streamGetter rhcos.CoreOSBuildFetcher) (*models.OsImage, error) {
 	osImage := &models.OsImage{
 		CPUArchitecture: &cpuArch,
 	}
 	osImage.OpenshiftVersion = &openshiftVersion
 
-	streamArch, err := st.GetArchitecture(cpuArch)
+	artifacts, err := rhcos.GetMetalArtifact(ctx, cpuArch, streamGetter)
 	if err != nil {
 		return nil, err
 	}
 
-	artifacts, ok := streamArch.Artifacts["metal"]
-	if !ok {
-		return nil, fmt.Errorf("failed to retrieve coreos metal info for architecture %s", cpuArch)
-	}
 	osImage.Version = &artifacts.Release
 
 	isoFormat, ok := artifacts.Formats["iso"]

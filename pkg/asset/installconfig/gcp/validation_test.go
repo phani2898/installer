@@ -22,7 +22,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
-	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/installer/pkg/asset/installconfig/gcp/mock"
 	"github.com/openshift/installer/pkg/ipnet"
 	"github.com/openshift/installer/pkg/types"
@@ -119,26 +118,6 @@ var (
 	invalidateBaseDomain     = func(ic *types.InstallConfig) { ic.BaseDomain = invalidBaseDomain }
 	enableCustomDNS          = func(ic *types.InstallConfig) { ic.GCP.UserProvisionedDNS = customDNS.UserProvisionedDNSEnabled }
 
-	validServiceEndpoint = func(ic *types.InstallConfig) {
-		ic.Publish = types.InternalPublishingStrategy
-		ic.GCP.ServiceEndpoints = append(ic.GCP.ServiceEndpoints,
-			configv1.GCPServiceEndpoint{
-				Name: configv1.GCPServiceEndpointNameCompute,
-				URL:  validServiceEndpointURL,
-			},
-		)
-	}
-
-	invalidServiceEndpointBadFormat = func(ic *types.InstallConfig) {
-		ic.Publish = types.InternalPublishingStrategy
-		ic.GCP.ServiceEndpoints = append(ic.GCP.ServiceEndpoints,
-			configv1.GCPServiceEndpoint{
-				Name: configv1.GCPServiceEndpointNameStorage,
-				URL:  invalidServiceEndpointURL,
-			},
-		)
-	}
-
 	invalidKeyRing = gcp.KMSKeyReference{
 		Name:      "invalidKeyName",
 		KeyRing:   "invalidKeyRingName",
@@ -207,6 +186,7 @@ var (
 		"n2d-standard-4":    {GuestCpus: 4, MemoryMb: 16384},
 		"c3d-standard-4":    {GuestCpus: 4, MemoryMb: 16384},
 		"c3-standard-4":     {GuestCpus: 4, MemoryMb: 16384},
+		"n4a-standard-4":    {GuestCpus: 4, MemoryMb: 16384},
 	}
 
 	subnetAPIResult = []*compute.Subnetwork{
@@ -468,19 +448,6 @@ func TestGCPInstallConfigValidation(t *testing.T) {
 			expectedErrMsg: "platform.gcp.compute.encryptionKey.kmsKey.keyRing: Invalid value: \"invalidKeyRingName\": failed to find key ring invalidKeyRingName: data, platform.gcp.defaultMachinePool.encryptionKey.kmsKey.keyRing: Invalid value: \"invalidKeyRingName\": failed to find key ring invalidKeyRingName: data",
 		},
 		{
-			name:          "Valid Service Endpoint Override",
-			edits:         editFunctions{validServiceEndpoint},
-			records:       []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.example.installer.domain."}},
-			expectedError: false,
-		},
-		{
-			name:           "Invalid Service Endpoint Override Bad Format",
-			edits:          editFunctions{invalidServiceEndpointBadFormat},
-			records:        []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.example.installer.domain."}},
-			expectedError:  true,
-			expectedErrMsg: `[platform.gcp.serviceEndpoint\[0\]: Invalid value: \"http://badstorage.googleapis\": Head \"http://badstorage.googleapis\": dial tcp: lookup badstorage.googleapis: no such host]`,
-		},
-		{
 			name:           "Invalid Base Domain",
 			edits:          editFunctions{invalidateBaseDomain},
 			records:        []*dns.ResourceRecordSet{},
@@ -541,10 +508,20 @@ func TestGCPInstallConfigValidation(t *testing.T) {
 	// Return fake credentials when asked
 	gcpClient.EXPECT().GetCredentials().Return(&googleoauth.Credentials{JSON: []byte(fakeCreds)}).AnyTimes()
 
+	params := gcp.DNSZoneParams{
+		Project:    validProjectName,
+		IsPublic:   false,
+		BaseDomain: "valid-cluster.example.installer.domain",
+	}
+	gcpClient.EXPECT().GetDNSZoneFromParams(gomock.Any(), params).Return(&validPrivateDNSZone, nil).AnyTimes()
+
 	// Expected results for the managed zone tests
 	gcpClient.EXPECT().GetDNSZoneByName(gomock.Any(), gomock.Any(), validPublicZone).Return(&validPublicDNSZone, nil).AnyTimes()
 	gcpClient.EXPECT().GetDNSZoneByName(gomock.Any(), gomock.Any(), validPrivateZone).Return(&validPrivateDNSZone, nil).AnyTimes()
 	gcpClient.EXPECT().GetDNSZoneByName(gomock.Any(), gomock.Any(), invalidPublicZone).Return(nil, fmt.Errorf("no matching DNS Zone found")).AnyTimes()
+
+	records := []*dns.ResourceRecordSet{{Name: "valid-cluster.example.installer.domain."}}
+	gcpClient.EXPECT().GetRecordSets(gomock.Any(), validProjectName, validPrivateZone).Return(records, nil).AnyTimes()
 
 	gcpClient.EXPECT().GetServiceAccount(gomock.Any(), validProjectName, validXpnSA).Return(validXpnSA, nil).AnyTimes()
 	gcpClient.EXPECT().GetServiceAccount(gomock.Any(), validProjectName, invalidXpnSA).Return("", fmt.Errorf("controlPlane.platform.gcp.serviceAccount: Internal error\"")).AnyTimes()
@@ -602,23 +579,60 @@ func TestGCPInstallConfigValidation(t *testing.T) {
 
 func TestValidatePreExistingPublicDNS(t *testing.T) {
 	cases := []struct {
-		name    string
-		records []*dns.ResourceRecordSet
-		err     string
+		name     string
+		records  []*dns.ResourceRecordSet
+		platform types.Platform
+		err      string
 	}{{
-		name:    "no pre-existing",
-		records: nil,
+		name:     "no pre-existing",
+		platform: types.Platform{GCP: &gcp.Platform{ProjectID: "project-id"}},
+		records:  nil,
 	}, {
-		name:    "no pre-existing",
-		records: []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.base-domain."}},
+		name:     "no pre-existing",
+		records:  []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.base-domain."}},
+		platform: types.Platform{GCP: &gcp.Platform{ProjectID: "project-id"}},
 	}, {
-		name:    "pre-existing",
+		name:     "pre-existing",
+		records:  []*dns.ResourceRecordSet{{Name: "api.cluster-name.base-domain."}},
+		platform: types.Platform{GCP: &gcp.Platform{ProjectID: "project-id"}},
+		err:      `^metadata\.name: Invalid value: "cluster-name": record\(s\) \["api\.cluster-name\.base-domain\."\] already exists in DNS Zone \(project-id/zone-name\) and might be in use by another cluster, please remove it to continue$`,
+	}, {
+		name:     "pre-existing",
+		records:  []*dns.ResourceRecordSet{{Name: "api.cluster-name.base-domain."}, {Name: "api.cluster-name.base-domain."}},
+		platform: types.Platform{GCP: &gcp.Platform{ProjectID: "project-id"}},
+		err:      `^metadata\.name: Invalid value: "cluster-name": record\(s\) \["api\.cluster-name\.base-domain\."\] already exists in DNS Zone \(project-id/zone-name\) and might be in use by another cluster, please remove it to continue$`,
+	}, {
+		name: "no pre-existing with specified zone",
+		platform: types.Platform{GCP: &gcp.Platform{
+			ProjectID: "other-project-id",
+			DNS: &gcp.DNS{
+				PrivateZone: &gcp.DNSZone{
+					Name:      "zone-name",
+					ProjectID: "project-id",
+				},
+			},
+			NetworkProjectID:   "network-project-id",
+			Network:            "test-network",
+			ControlPlaneSubnet: "test-subnet",
+			ComputeSubnet:      "test-subnet",
+		}},
+	}, {
+		name:    "pre-existing with specified zone",
 		records: []*dns.ResourceRecordSet{{Name: "api.cluster-name.base-domain."}},
-		err:     `^metadata\.name: Invalid value: "cluster-name": record\(s\) \["api\.cluster-name\.base-domain\."\] already exists in DNS Zone \(project-id/zone-name\) and might be in use by another cluster, please remove it to continue$`,
-	}, {
-		name:    "pre-existing",
-		records: []*dns.ResourceRecordSet{{Name: "api.cluster-name.base-domain."}, {Name: "api.cluster-name.base-domain."}},
-		err:     `^metadata\.name: Invalid value: "cluster-name": record\(s\) \["api\.cluster-name\.base-domain\."\] already exists in DNS Zone \(project-id/zone-name\) and might be in use by another cluster, please remove it to continue$`,
+		platform: types.Platform{GCP: &gcp.Platform{
+			ProjectID: "other-project-id",
+			DNS: &gcp.DNS{
+				PrivateZone: &gcp.DNSZone{
+					Name:      "zone-name",
+					ProjectID: "project-id",
+				},
+			},
+			NetworkProjectID:   "network-project-id",
+			Network:            "test-network",
+			ControlPlaneSubnet: "test-subnet",
+			ComputeSubnet:      "test-subnet",
+		}},
+		err: `^metadata\.name: Invalid value: "cluster-name": record\(s\) \["api\.cluster-name\.base-domain\."\] already exists in DNS Zone \(project-id/zone-name\) and might be in use by another cluster, please remove it to continue$`,
 	}}
 
 	for _, test := range cases {
@@ -646,24 +660,63 @@ func TestValidatePreExistingPublicDNS(t *testing.T) {
 
 func TestValidatePrivateDNSZone(t *testing.T) {
 	cases := []struct {
-		name    string
-		records []*dns.ResourceRecordSet
-		err     string
+		name     string
+		records  []*dns.ResourceRecordSet
+		platform types.Platform
+		err      string
 	}{{
-		name:    "no pre-existing",
-		records: nil,
+		name:     "no pre-existing",
+		platform: types.Platform{GCP: &gcp.Platform{ProjectID: "project-id", Network: "shared-vpc", NetworkProjectID: "test-network-project"}},
+		records:  nil,
 	}, {
-		name:    "no pre-existing",
-		records: []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.base-domain."}},
+		name:     "no pre-existing",
+		platform: types.Platform{GCP: &gcp.Platform{ProjectID: "project-id", Network: "shared-vpc", NetworkProjectID: "test-network-project"}},
+		records:  []*dns.ResourceRecordSet{{Name: "api.another-cluster-name.base-domain."}},
 	}, {
-		name:    "pre-existing",
+		name:     "pre-existing",
+		records:  []*dns.ResourceRecordSet{{Name: "api.cluster-name.base-domain."}},
+		platform: types.Platform{GCP: &gcp.Platform{ProjectID: "project-id", Network: "shared-vpc", NetworkProjectID: "test-network-project"}},
+		err:      `^metadata\.name: Invalid value: "cluster-name": record\(s\) \["api\.cluster-name\.base-domain\."\] already exists in DNS Zone \(project-id/zone-name\) and might be in use by another cluster, please remove it to continue$`,
+	}, {
+		name:     "pre-existing",
+		records:  []*dns.ResourceRecordSet{{Name: "api.cluster-name.base-domain."}, {Name: "api.cluster-name.base-domain."}},
+		platform: types.Platform{GCP: &gcp.Platform{ProjectID: "project-id", Network: "shared-vpc", NetworkProjectID: "test-network-project"}},
+		err:      `^metadata\.name: Invalid value: "cluster-name": record\(s\) \["api\.cluster-name\.base-domain\."\] already exists in DNS Zone \(project-id/zone-name\) and might be in use by another cluster, please remove it to continue$`,
+	}, {
+		name: "no pre-existing with specified zone",
+		platform: types.Platform{GCP: &gcp.Platform{
+			ProjectID: "other-project-id",
+			DNS: &gcp.DNS{
+				PrivateZone: &gcp.DNSZone{
+					Name:      "zone-name",
+					ProjectID: "project-id",
+				},
+			},
+			NetworkProjectID:   "network-project-id",
+			Network:            "test-network",
+			ControlPlaneSubnet: "test-subnet",
+			ComputeSubnet:      "test-subnet",
+		}},
+	}, {
+		name:    "pre-existing with specified zone",
 		records: []*dns.ResourceRecordSet{{Name: "api.cluster-name.base-domain."}},
-		err:     `^metadata\.name: Invalid value: "cluster-name": record\(s\) \["api\.cluster-name\.base-domain\."\] already exists in DNS Zone \(project-id/zone-name\) and might be in use by another cluster, please remove it to continue$`,
-	}, {
-		name:    "pre-existing",
-		records: []*dns.ResourceRecordSet{{Name: "api.cluster-name.base-domain."}, {Name: "api.cluster-name.base-domain."}},
-		err:     `^metadata\.name: Invalid value: "cluster-name": record\(s\) \["api\.cluster-name\.base-domain\."\] already exists in DNS Zone \(project-id/zone-name\) and might be in use by another cluster, please remove it to continue$`,
+		platform: types.Platform{GCP: &gcp.Platform{
+			ProjectID: "other-project-id",
+			DNS: &gcp.DNS{
+				PrivateZone: &gcp.DNSZone{
+					Name:      "zone-name",
+					ProjectID: "project-id",
+				},
+			},
+			NetworkProjectID:   "network-project-id",
+			Network:            "test-network",
+			ControlPlaneSubnet: "test-subnet",
+			ComputeSubnet:      "test-subnet",
+		}},
+		err: `^metadata\.name: Invalid value: "cluster-name": record\(s\) \["api\.cluster-name\.base-domain\."\] already exists in DNS Zone \(project-id/zone-name\) and might be in use by another cluster, please remove it to continue$`,
 	}}
+
+	params := gcp.DNSZoneParams{Project: "project-id", IsPublic: false, BaseDomain: "cluster-name.base-domain"}
 
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
@@ -671,14 +724,19 @@ func TestValidatePrivateDNSZone(t *testing.T) {
 			defer mockCtrl.Finish()
 			gcpClient := mock.NewMockAPI(mockCtrl)
 
+			gcpClient.EXPECT().GetDNSZoneFromParams(gomock.Any(), params).Return(&dns.ManagedZone{Name: "zone-name"}, nil).AnyTimes()
+			if test.platform.GCP.DNS != nil && test.platform.GCP.DNS.PrivateZone != nil {
+				paramsWithName := gcp.DNSZoneParams{Project: "project-id", IsPublic: false, BaseDomain: "cluster-name.base-domain", Name: test.platform.GCP.DNS.PrivateZone.Name}
+				gcpClient.EXPECT().GetDNSZoneFromParams(gomock.Any(), paramsWithName).Return(&dns.ManagedZone{Name: "zone-name"}, nil).AnyTimes()
+			}
 			gcpClient.EXPECT().GetDNSZone(gomock.Any(), "project-id", "cluster-name.base-domain", false).Return(&dns.ManagedZone{Name: "zone-name"}, nil).AnyTimes()
 			gcpClient.EXPECT().GetRecordSets(gomock.Any(), gomock.Eq("project-id"), gomock.Eq("zone-name")).Return(test.records, nil).AnyTimes()
 
 			err := ValidatePrivateDNSZone(gcpClient, &types.InstallConfig{
 				ObjectMeta: metav1.ObjectMeta{Name: "cluster-name"},
 				BaseDomain: "base-domain",
-				Platform:   types.Platform{GCP: &gcp.Platform{ProjectID: "project-id", Network: "shared-vpc", NetworkProjectID: "test-network-project"}},
-			})
+				Platform:   test.platform,
+			}).ToAggregate()
 			if test.err == "" {
 				assert.True(t, err == nil)
 			} else {
@@ -903,7 +961,7 @@ func TestValidateZones(t *testing.T) {
 			name:           "Invalid zones for defaultMachine",
 			edits:          editFunctions{invalidZonesDefaultMachine},
 			expectedError:  true,
-			expectedErrMsg: `^\[platform.gcp.defaultMachinePlatform.zones: Invalid value: \[\]string\{"us\-central1\-x", "us\-central1\-y"\}: zone\(s\) not found in region\]$`,
+			expectedErrMsg: `^\[platform.gcp.defaultMachinePlatform.zones: Invalid value: \["us\-central1\-x","us\-central1\-y"\]: zone\(s\) not found in region\]$`,
 		},
 		{
 			name:           "Valid zones for controlPlane",
@@ -915,7 +973,7 @@ func TestValidateZones(t *testing.T) {
 			name:           "Invalid zones for controlPlane",
 			edits:          editFunctions{invalidZonesControlPlane},
 			expectedError:  true,
-			expectedErrMsg: `^\[controlPlane.platform.gcp.zones: Invalid value: \[\]string\{"us\-central1\-x", "us\-central1\-y"\}: zone\(s\) not found in region\]$`,
+			expectedErrMsg: `^\[controlPlane.platform.gcp.zones: Invalid value: \["us\-central1\-x","us\-central1\-y"\]: zone\(s\) not found in region\]$`,
 		},
 		{
 			name:           "Valid zones for compute",
@@ -927,7 +985,7 @@ func TestValidateZones(t *testing.T) {
 			name:           "Invalid zones for compute",
 			edits:          editFunctions{invalidZonesCompute},
 			expectedError:  true,
-			expectedErrMsg: `^\[compute\[0\].platform.gcp.zones: Invalid value: \[\]string\{"us\-central1\-w", "us\-central1\-y", "us\-central1\-z"\}: zone\(s\) not found in region\]$`,
+			expectedErrMsg: `^\[compute\[0\].platform.gcp.zones: Invalid value: \["us\-central1\-w","us\-central1\-y","us\-central1\-z"\]: zone\(s\) not found in region\]$`,
 		},
 	}
 
@@ -1186,6 +1244,26 @@ func TestValidateInstanceType(t *testing.T) {
 			expectedErrMsg:      `^\[instance.onHostMaintenance: Invalid value: "Migrate": onHostMaintenace must be set to Terminate when confidentialCompute is IntelTrustedDomainExtensions\]`,
 		},
 		{
+			name:                "Enabled confidential compute with unsupported machine type",
+			zones:               []string{"a"},
+			instanceType:        "c3-standard-4",
+			diskType:            "pd-ssd",
+			onHostMaintenance:   "Terminate",
+			confidentialCompute: "Enabled",
+			expectedError:       true,
+			expectedErrMsg:      `^\[instance.type: Invalid value: "c3-standard-4": Machine type does not support a Confidential Compute value of Enabled. Machine types supporting Enabled: c2d, n2d, c3d\]`,
+		},
+		{
+			name:                "Enabled confidential compute with supported machine type",
+			zones:               []string{"a"},
+			instanceType:        "c3d-standard-4",
+			diskType:            "pd-ssd",
+			onHostMaintenance:   "Terminate",
+			confidentialCompute: "Enabled",
+			expectedError:       false,
+			expectedErrMsg:      "",
+		},
+		{
 			name:                "AMDEncryptedVirtualization confidential compute with unsupported machine type",
 			zones:               []string{"a"},
 			instanceType:        "c3-standard-4",
@@ -1193,7 +1271,7 @@ func TestValidateInstanceType(t *testing.T) {
 			onHostMaintenance:   "Terminate",
 			confidentialCompute: "AMDEncryptedVirtualization",
 			expectedError:       true,
-			expectedErrMsg:      `^\[instance.type: Invalid value: "c3-standard-4": Machine type do not support AMDEncryptedVirtualization. Machine types supporting AMDEncryptedVirtualization: c2d, n2d, c3d\]`,
+			expectedErrMsg:      `^\[instance.type: Invalid value: "c3-standard-4": Machine type does not support a Confidential Compute value of AMDEncryptedVirtualization. Machine types supporting AMDEncryptedVirtualization: c2d, n2d, c3d\]`,
 		},
 		{
 			name:                "AMDEncryptedVirtualization confidential compute with supported machine type",
@@ -1213,7 +1291,7 @@ func TestValidateInstanceType(t *testing.T) {
 			onHostMaintenance:   "Terminate",
 			confidentialCompute: "AMDEncryptedVirtualizationNestedPaging",
 			expectedError:       true,
-			expectedErrMsg:      `^\[instance.type: Invalid value: "c2d-standard-4": Machine type do not support AMDEncryptedVirtualizationNestedPaging. Machine types supporting AMDEncryptedVirtualizationNestedPaging: n2d\]`,
+			expectedErrMsg:      `^\[instance.type: Invalid value: "c2d-standard-4": Machine type does not support a Confidential Compute value of AMDEncryptedVirtualizationNestedPaging. Machine types supporting AMDEncryptedVirtualizationNestedPaging: n2d\]`,
 		},
 		{
 			name:                "AMDEncryptedVirtualizationNestedPaging confidential compute with supported machine type",
@@ -1233,7 +1311,7 @@ func TestValidateInstanceType(t *testing.T) {
 			onHostMaintenance:   "Terminate",
 			confidentialCompute: "IntelTrustedDomainExtensions",
 			expectedError:       true,
-			expectedErrMsg:      `^\[instance.type: Invalid value: "n2d-standard-4": Machine type do not support IntelTrustedDomainExtensions. Machine types supporting IntelTrustedDomainExtensions: c3\]`,
+			expectedErrMsg:      `^\[instance.type: Invalid value: "n2d-standard-4": Machine type does not support a Confidential Compute value of IntelTrustedDomainExtensions. Machine types supporting IntelTrustedDomainExtensions: c3\]`,
 		},
 		{
 			name:                "IntelTrustedDomainExtensions confidential compute with supported machine type",
@@ -1244,6 +1322,39 @@ func TestValidateInstanceType(t *testing.T) {
 			confidentialCompute: "IntelTrustedDomainExtensions",
 			expectedError:       false,
 			expectedErrMsg:      "",
+		},
+		{
+			name:                "Valid n4a ARM instance type with hyperdisk-balanced",
+			zones:               []string{"a"},
+			instanceType:        "n4a-standard-4",
+			diskType:            "hyperdisk-balanced",
+			arch:                "arm64",
+			onHostMaintenance:   "Migrate",
+			confidentialCompute: "Disabled",
+			expectedError:       false,
+			expectedErrMsg:      "",
+		},
+		{
+			name:                "Invalid n4a instance with pd-ssd disk type",
+			zones:               []string{"a"},
+			instanceType:        "n4a-standard-4",
+			diskType:            "pd-ssd",
+			arch:                "arm64",
+			onHostMaintenance:   "Migrate",
+			confidentialCompute: "Disabled",
+			expectedError:       true,
+			expectedErrMsg:      `^\[instance.diskType: Invalid value: \"pd\-ssd\": n4a\-standard\-4 instance requires one of the following disk types: \[hyperdisk\-balanced\]\]$`,
+		},
+		{
+			name:                "Invalid n4a instance with amd64 architecture",
+			zones:               []string{"a"},
+			instanceType:        "n4a-standard-4",
+			diskType:            "hyperdisk-balanced",
+			arch:                "amd64",
+			onHostMaintenance:   "Migrate",
+			confidentialCompute: "Disabled",
+			expectedError:       true,
+			expectedErrMsg:      `^\[instance.type: Invalid value: "n4a\-standard\-4": instance type architecture arm64 does not match specified architecture amd64\]$`,
 		},
 	}
 
@@ -1376,43 +1487,43 @@ func TestValidateMarketplaceImages(t *testing.T) {
 			name:           "Invalid default machine image",
 			edits:          editFunctions{invalidDefaultMachineImage},
 			expectedError:  true,
-			expectedErrMsg: `^\[platform.gcp.defaultMachinePlatform.osImage: Invalid value: gcp.OSImage{Name:"invalid-image", Project:"project-id"}: could not find the boot image: image not found\]$`,
+			expectedErrMsg: `^\[platform.gcp.defaultMachinePlatform.osImage: Invalid value: {"name":"invalid-image","project":"project-id"}: could not find the boot image: image not found\]$`,
 		},
 		{
 			name:           "Invalid control plane image",
 			edits:          editFunctions{invalidControlPlaneImage},
 			expectedError:  true,
-			expectedErrMsg: `^\[controlPlane.platform.gcp.osImage: Invalid value: gcp.OSImage{Name:"invalid-image", Project:"project-id"}: could not find the boot image: image not found\]$`,
+			expectedErrMsg: `^\[controlPlane.platform.gcp.osImage: Invalid value: {"name":"invalid-image","project":"project-id"}: could not find the boot image: image not found\]$`,
 		},
 		{
 			name:           "Invalid compute image",
 			edits:          editFunctions{invalidComputeImage},
 			expectedError:  true,
-			expectedErrMsg: `^\[compute\[0\].platform.gcp.osImage: Invalid value: gcp.OSImage{Name:"invalid-image", Project:"project-id"}: could not find the boot image: image not found\]$`,
+			expectedErrMsg: `^\[compute\[0\].platform.gcp.osImage: Invalid value: {"name":"invalid-image","project":"project-id"}: could not find the boot image: image not found\]$`,
 		},
 		{
 			name:           "Invalid images",
 			edits:          editFunctions{invalidDefaultMachineImage, invalidControlPlaneImage, invalidComputeImage},
 			expectedError:  true,
-			expectedErrMsg: `^\[(.*?\.osImage: Invalid value: gcp\.OSImage\{Name:"invalid-image", Project:"project-id"\}: could not find the boot image: image not found){3}\]$`,
+			expectedErrMsg: `^\[(.*?\.osImage: Invalid value: \{"name":"invalid-image","project":"project-id"\}: could not find the boot image: image not found){3}\]$`,
 		},
 		{
 			name:           "Mismatched default machine image architecture",
 			edits:          editFunctions{mismatchedDefaultMachineImageArchitecture},
 			expectedError:  true,
-			expectedErrMsg: `^\[controlPlane.platform.gcp.osImage: Invalid value: gcp.OSImage{Name:"mismatched-arch", Project:"project-id"}: image architecture X86_64 does not match controlPlane node architecture arm64 compute\[0\].platform.gcp.osImage: Invalid value: gcp.OSImage{Name:"mismatched-arch", Project:"project-id"}: image architecture X86_64 does not match compute node architecture arm64]$`,
+			expectedErrMsg: `^\[controlPlane.platform.gcp.osImage: Invalid value: {"name":"mismatched-arch","project":"project-id"}: image architecture X86_64 does not match controlPlane node architecture arm64 compute\[0\].platform.gcp.osImage: Invalid value: {"name":"mismatched-arch","project":"project-id"}: image architecture X86_64 does not match compute node architecture arm64]$`,
 		},
 		{
 			name:           "Mismatched control plane image architecture",
 			edits:          editFunctions{mismatchedControlPlaneImageArchitecture},
 			expectedError:  true,
-			expectedErrMsg: `^\[controlPlane.platform.gcp.osImage: Invalid value: gcp.OSImage{Name:"mismatched-arch", Project:"project-id"}: image architecture X86_64 does not match controlPlane node architecture arm64]$`,
+			expectedErrMsg: `^\[controlPlane.platform.gcp.osImage: Invalid value: {"name":"mismatched-arch","project":"project-id"}: image architecture X86_64 does not match controlPlane node architecture arm64]$`,
 		},
 		{
 			name:           "Mismatched compute image architecture",
 			edits:          editFunctions{mismatchedComputeImageArchitecture},
 			expectedError:  true,
-			expectedErrMsg: `^\[compute\[0\].platform.gcp.osImage: Invalid value: gcp.OSImage{Name:"mismatched-arch", Project:"project-id"}: image architecture X86_64 does not match compute node architecture arm64]$`,
+			expectedErrMsg: `^\[compute\[0\].platform.gcp.osImage: Invalid value: {"name":"mismatched-arch","project":"project-id"}: image architecture X86_64 does not match compute node architecture arm64]$`,
 		},
 		{
 			name:            "Missing image architecture",

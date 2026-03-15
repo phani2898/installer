@@ -32,9 +32,15 @@ import (
 // instance using the UntagResources operation, you must have both of the
 // following permissions:
 //
-//   - tag:UntagResource
+//   - tag:UntagResources
 //
 //   - ec2:DeleteTags
+//
+// In addition, some services might have specific requirements for untagging some
+// types of resources. For example, to untag Amazon Web Services Glue Connection,
+// you must also have the glue:GetConnection permission. If the expected minimum
+// permissions don't work, check the documentation for that service's tagging APIs
+// for more information.
 func (c *Client) UntagResources(ctx context.Context, params *UntagResourcesInput, optFns ...func(*Options)) (*UntagResourcesOutput, error) {
 	if params == nil {
 		params = &UntagResourcesInput{}
@@ -149,6 +155,9 @@ func (c *Client) addOperationUntagResourcesMiddlewares(stack *middleware.Stack, 
 	if err = addUserAgentRetryMode(stack, options); err != nil {
 		return err
 	}
+	if err = addCredentialSource(stack, options); err != nil {
+		return err
+	}
 	if err = addOpUntagResourcesValidationMiddleware(stack); err != nil {
 		return err
 	}
@@ -170,16 +179,13 @@ func (c *Client) addOperationUntagResourcesMiddlewares(stack *middleware.Stack, 
 	if err = addDisableHTTPSMiddleware(stack, options); err != nil {
 		return err
 	}
-	if err = addSpanInitializeStart(stack); err != nil {
+	if err = addInterceptBeforeRetryLoop(stack, options); err != nil {
 		return err
 	}
-	if err = addSpanInitializeEnd(stack); err != nil {
+	if err = addInterceptAttempt(stack, options); err != nil {
 		return err
 	}
-	if err = addSpanBuildRequestStart(stack); err != nil {
-		return err
-	}
-	if err = addSpanBuildRequestEnd(stack); err != nil {
+	if err = addInterceptors(stack, options); err != nil {
 		return err
 	}
 	return nil

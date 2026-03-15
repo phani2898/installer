@@ -3,11 +3,14 @@ package manifests
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
 
+	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/gophercloud/utils/v2/openstack/clientconfig"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -35,6 +38,7 @@ import (
 	ibmcloudtypes "github.com/openshift/installer/pkg/types/ibmcloud"
 	openstacktypes "github.com/openshift/installer/pkg/types/openstack"
 	ovirttypes "github.com/openshift/installer/pkg/types/ovirt"
+	powervctypes "github.com/openshift/installer/pkg/types/powervc"
 	vspheretypes "github.com/openshift/installer/pkg/types/vsphere"
 )
 
@@ -89,20 +93,22 @@ func (o *Openshift) Generate(ctx context.Context, dependencies asset.Parents) er
 	platform := installConfig.Config.Platform.Name()
 	switch platform {
 	case awstypes.Name:
-		ssn, err := installConfig.AWS.Session(ctx)
+		awsconfig, err := installconfigaws.GetConfigWithOptions(ctx, config.WithRegion(installConfig.AWS.Region))
 		if err != nil {
 			return err
 		}
-		creds, err := ssn.Config.Credentials.Get()
+
+		creds, err := awsconfig.Credentials.Retrieve(ctx)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to retrieve aws credentials: %w", err)
 		}
+
 		if !installconfigaws.IsStaticCredentials(creds) {
 			switch {
 			case installConfig.Config.CredentialsMode == "":
-				return errors.Errorf("AWS credentials provided by %s are not valid for default credentials mode", creds.ProviderName)
+				return errors.Errorf("AWS credentials provided by %s are not valid for default credentials mode", creds.Source)
 			case installConfig.Config.CredentialsMode != types.ManualCredentialsMode:
-				return errors.Errorf("AWS credentials provided by %s are not valid for %s credentials mode", creds.ProviderName, installConfig.Config.CredentialsMode)
+				return errors.Errorf("AWS credentials provided by %s are not valid for %s credentials mode", creds.Source, installConfig.Config.CredentialsMode)
 			}
 		}
 		cloudCreds = cloudCredsSecretData{
@@ -150,7 +156,7 @@ func (o *Openshift) Generate(ctx context.Context, dependencies asset.Parents) er
 				Base64encodeAPIKey: base64.StdEncoding.EncodeToString([]byte(client.GetAPIKey())),
 			},
 		}
-	case openstacktypes.Name:
+	case openstacktypes.Name, powervctypes.Name:
 		opts := new(clientconfig.ClientOpts)
 		opts.Cloud = installConfig.Config.Platform.OpenStack.Cloud
 		cloud, err := clientconfig.GetCloudFromYAML(opts)
@@ -267,7 +273,7 @@ func (o *Openshift) Generate(ctx context.Context, dependencies asset.Parents) er
 	}
 
 	switch platform {
-	case awstypes.Name, openstacktypes.Name, vspheretypes.Name, azuretypes.Name, gcptypes.Name, ibmcloudtypes.Name, ovirttypes.Name:
+	case awstypes.Name, openstacktypes.Name, powervctypes.Name, vspheretypes.Name, azuretypes.Name, gcptypes.Name, ibmcloudtypes.Name, ovirttypes.Name:
 		if installConfig.Config.CredentialsMode != types.ManualCredentialsMode {
 			assetData["99_cloud-creds-secret.yaml"] = applyTemplateData(cloudCredsSecret.Files()[0].Data, templateData)
 		}
@@ -286,7 +292,7 @@ func (o *Openshift) Generate(ctx context.Context, dependencies asset.Parents) er
 			continue
 		}
 		o.FileList = append(o.FileList, &asset.File{
-			Filename: filepath.Join(openshiftManifestDir, name),
+			Filename: path.Join(openshiftManifestDir, name),
 			Data:     data,
 		})
 	}

@@ -24,17 +24,23 @@ aliases:
     - praveenkumar
     - cfergeau
   openstack-approvers:
-    - dkokkino
     - gryf
     - mandre
-    - pierreprinetti
     - stephenfin
   openstack-reviewers:
-    - dkokkino
     - gryf
     - mandre
-    - pierreprinetti
     - stephenfin
+  powervc-approvers:
+    - hamzy
+    - mjturek
+    - prb112
+    - Prashanth684
+  powervc-reviewers:
+    - hamzy
+    - mjturek
+    - prb112
+    - Prashanth684
   powervs-approvers:
     - clnperez
     - mkumatag
@@ -75,8 +81,10 @@ aliases:
     - tthvo
   gcp-approvers:
     - patrickdillon
+    - barbacbd
   gcp-reviewers:
     - patrickdillon
+    - barbacbd
   azure-approvers:
     - jhixson74
     - rna-afk
@@ -138,9 +146,11 @@ aliases:
     - madhu-pillai
     - Johan-Liebert1
     - tlbueno
-    - jcapiitao
+    - joelcapitao
     - Roshan-R
     - PeaceRebel
+    - angelcerveraroldan
+    - Rolv-Apneseth
   coreos-reviewers:
     - c4rt0
     - cgwalters
@@ -163,9 +173,11 @@ aliases:
     - madhu-pillai
     - Johan-Liebert1
     - tlbueno
-    - jcapiitao
+    - joelcapitao
     - Roshan-R
     - PeaceRebel
+    - angelcerveraroldan
+    - Rolv-Apneseth
   agent-reviewers:
     - andfasano
     - bfournie

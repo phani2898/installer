@@ -20,31 +20,6 @@ func TestFeatureGates(t *testing.T) {
 		expected      string
 	}{
 		{
-			name: "GCP UserProvisionedDNS is not allowed without Feature Gates",
-			installConfig: func() *types.InstallConfig {
-				c := validInstallConfig()
-				c.GCP = validGCPPlatform()
-				c.GCP.UserProvisionedDNS = dns.UserProvisionedDNSEnabled
-				return c
-			}(),
-			expected: `^platform.gcp.userProvisionedDNS: Forbidden: this field is protected by the GCPClusterHostedDNSInstall feature gate which must be enabled through either the TechPreviewNoUpgrade or CustomNoUpgrade feature set$`,
-		},
-		{
-			name: "GCP Custom API Endpoints is not allowed without Feature Gates",
-			installConfig: func() *types.InstallConfig {
-				c := validInstallConfig()
-				c.GCP = validGCPPlatform()
-				c.GCP.ServiceEndpoints = []v1.GCPServiceEndpoint{
-					{
-						Name: v1.GCPServiceEndpointNameCompute,
-						URL:  "https://compute.googleapis.com",
-					},
-				}
-				return c
-			}(),
-			expected: `^platform.gcp.serviceEndpoints: Forbidden: this field is protected by the GCPCustomAPIEndpointsInstall feature gate which must be enabled through either the TechPreviewNoUpgrade or CustomNoUpgrade feature set$`,
-		},
-		{
 			name: "AWS UserProvisionedDNS is not allowed without Feature Gates",
 			installConfig: func() *types.InstallConfig {
 				c := validInstallConfig()
@@ -217,6 +192,23 @@ func TestFeatureGates(t *testing.T) {
 				c.FeatureSet = v1.DevPreviewNoUpgrade
 				c.ControlPlane.Fencing = &types.Fencing{Credentials: []*types.Credential{{HostName: "host1"}, {HostName: "host2"}}}
 				return c
+			}(),
+		},
+		{
+			name: "OKD featureset requires SCOS-compiled installer",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.FeatureSet = v1.OKD
+				return c
+			}(),
+			// This test will fail when installer is compiled without TAGS=scos
+			// When compiled with TAGS=scos, this should pass (no error)
+			expected: func() string {
+				// Only expect error if not compiled with SCOS
+				if !types.SCOS {
+					return `^featureSet: Forbidden: OKD featureset is not supported on OpenShift clusters$`
+				}
+				return ""
 			}(),
 		},
 	}

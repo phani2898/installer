@@ -22,6 +22,7 @@ func (c *Client) ListDNSDomains(search string) ([]*cmv1.DNSDomain, error) {
 		DNSDomains().
 		List().
 		Parameter("search", search).
+		Parameter("order", "organization.id asc").
 		Page(1).Size(-1).
 		Send()
 	if err != nil {
@@ -43,11 +44,11 @@ func (c *Client) DeleteDNSDomain(id string) error {
 	return nil
 }
 
-func (c *Client) CreateDNSDomain() (*cmv1.DNSDomain, error) {
+func (c *Client) CreateDNSDomain(dnsDomain *cmv1.DNSDomain) (*cmv1.DNSDomain, error) {
 	response, err := c.ocm.ClustersMgmt().V1().
 		DNSDomains().
 		Add().
-		Body(&cmv1.DNSDomain{}).
+		Body(dnsDomain).
 		Send()
 	if err != nil {
 		return nil, handleErr(response.Error(), err)

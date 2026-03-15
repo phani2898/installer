@@ -177,13 +177,13 @@ foreach ($fd in $fds)
 
     # If the folder already exists
     Write-Output "Checking for folder in failure domain $($fd.datacenter)/$($fd.cluster)"
-    $folder = Get-Folder -Server $viserver -Name $clustername -Location $fd.datacenter -ErrorAction continue 2>$null
+    $folder = Get-Folder -Server $viserver -Name $metadata.infraID -Location $fd.datacenter -ErrorAction continue 2>$null
 
     # Otherwise create the folder within the datacenter as defined in the upi-variables
     if (-Not $?) {
         Write-Output "Creating folder $($clustername) in datacenter $($fd.datacenter) of vCenter $($fd.server)"
-        (get-view (Get-Datacenter -Server $viserver -Name $fd.datacenter).ExtensionData.vmfolder).CreateFolder($clustername)
-        $folder = Get-Folder -Server $viserver -Name $clustername -Location $fd.datacenter
+        (get-view (Get-Datacenter -Server $viserver -Name $fd.datacenter).ExtensionData.vmfolder).CreateFolder($metadata.infraID)
+        $folder = Get-Folder -Server $viserver -Name $metadata.infraID -Location $fd.datacenter
         New-TagAssignment -Server $viserver -Entity $folder -Tag $tag > $null
     }
 
@@ -257,13 +257,13 @@ $tagCategory = Get-TagCategory -Server $fds[0].server -Name "openshift-$($metada
 $tag = Get-Tag -Server $fds[0].server -Category $tagCategory -Name "$($metadata.infraID)" -ErrorAction continue 2>$null
 $rp = Get-ResourcePool -Name $($metadata.infraID) -Location $(Get-Cluster -Server $fds[0].server -Name $($fds[0].cluster))
 $datastoreInfo = Get-Datastore -Name $fds[0].datastore -Server $fds[0].server -Location $fds[0].datacenter
-$folder = Get-Folder -Server $fds[0].server -Name $clustername -Location $fds[0].datacenter
+$folder = Get-Folder -Server $fds[0].server -Name $metadata.infraID -Location $fds[0].datacenter
 $template = Get-VM -Server $fds[0].server -Name $vm_template -Location $fds[0].datacenter
 
 # Create LB for Cluster
 $ignition = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes((New-LoadBalancerIgnition $sshKey)))
 $network = New-VMNetworkConfig -Server $fds[0].server -Hostname "$($metadata.infraID)-lb" -IPAddress $lb_ip_address -Netmask $netmask -Gateway $gateway -DNS $dns -Network $failure_domains[0].network
-$vm = New-OpenShiftVM -IgnitionData $ignition -Name "$($metadata.infraID)-lb" -Template $template -Server $fds[0].server -ResourcePool $rp -Datastore $datastoreInfo -Location $folder -Tag $tag -Networking $network -Network $($fds[0].network) -SecureBoot $secureboot -StoragePolicy $storagepolicy -MemoryMB 8192 -NumCpu 4
+$vm = New-OpenShiftVM -IgnitionData $ignition -Name "$($metadata.infraID)-lb" -Template $template -Server $fds[0].server -ResourcePool $rp -Datastore $datastoreInfo -Location $folder -Tag $tag -Networking $network -Network $($fds[0].network) -SecureBoot $secureboot -StoragePolicy $storagepolicy -MemoryMB $lb_memory -NumCpu $lb_num_cpus -CoresPerSocket $lb_cores_per_socket
 $vm | Start-VM
 
 # Take the $virtualmachines defined in upi-variables and convert to a powershell object

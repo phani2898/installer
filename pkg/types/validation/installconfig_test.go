@@ -22,6 +22,7 @@ import (
 	"github.com/openshift/installer/pkg/types/external"
 	"github.com/openshift/installer/pkg/types/gcp"
 	"github.com/openshift/installer/pkg/types/ibmcloud"
+	"github.com/openshift/installer/pkg/types/network"
 	"github.com/openshift/installer/pkg/types/none"
 	"github.com/openshift/installer/pkg/types/nutanix"
 	"github.com/openshift/installer/pkg/types/openstack"
@@ -59,6 +60,15 @@ func validInstallConfig() *types.InstallConfig {
 func validAWSPlatform() *aws.Platform {
 	return &aws.Platform{
 		Region: "us-east-1",
+	}
+}
+
+func validAzurePlatform() *azure.Platform {
+	return &azure.Platform{
+		Region:                      "centralus",
+		BaseDomainResourceGroupName: "test-basedomain-rg",
+		CloudName:                   azure.PublicCloud,
+		OutboundType:                "Loadbalancer",
 	}
 }
 
@@ -274,7 +284,7 @@ func validDualStackNetworkingConfig() *types.Networking {
 		},
 	}
 }
-func InvalidPrimaryV6DualStackNetworkingConfig() *types.Networking {
+func validPrimaryV6DualStackNetworkingConfig() *types.Networking {
 	return &types.Networking{
 		NetworkType: "OVNKubernetes",
 		MachineNetwork: []types.MachineNetworkEntry{
@@ -286,8 +296,8 @@ func InvalidPrimaryV6DualStackNetworkingConfig() *types.Networking {
 			},
 		},
 		ServiceNetwork: []ipnet.IPNet{
-			*ipnet.MustParseCIDR("172.30.0.0/16"),
 			*ipnet.MustParseCIDR("ffd1::/112"),
+			*ipnet.MustParseCIDR("172.30.0.0/16"),
 		},
 		ClusterNetwork: []types.ClusterNetworkEntry{
 			{
@@ -303,9 +313,10 @@ func InvalidPrimaryV6DualStackNetworkingConfig() *types.Networking {
 }
 func TestValidateInstallConfig(t *testing.T) {
 	cases := []struct {
-		name          string
-		installConfig *types.InstallConfig
-		expectedError string
+		name             string
+		installConfig    *types.InstallConfig
+		expectedError    string
+		restoreFnFactory func(*types.InstallConfig) func()
 	}{
 		{
 			name:          "minimal",
@@ -446,7 +457,7 @@ func TestValidateInstallConfig(t *testing.T) {
 				}
 				return c
 			}(),
-			expectedError: `^\[networking\.serviceNetwork\[0\]: Invalid value: "100\.64\.2\.0/24": must not overlap with OVNKubernetes default internal subnet 100\.64\.0\.0/16, networking\.serviceNetwork\[1\]: Invalid value: "fd98::/112": must not overlap with OVNKubernetes default internal subnet fd98::/64\]$`,
+			expectedError: `^\[networking\.serviceNetwork\[0\]: Invalid value: "100\.64\.2\.0/24": must not overlap with OVNKubernetes default internal subnet 100\.64\.0\.0/16: please run 'openshift-install explain installconfig.networking.ovnKubernetesConfig.ipv4' for further documentation, networking\.serviceNetwork\[1\]: Invalid value: "fd98::/112": must not overlap with OVNKubernetes default internal subnet fd98::/64: please run 'openshift-install explain installconfig.networking.ovnKubernetesConfig.ipv6' for further documentation\]$`,
 		},
 		{
 			name: "overlapping service network and default OVNKubernetes switch networks",
@@ -602,7 +613,7 @@ func TestValidateInstallConfig(t *testing.T) {
 				}
 				return c
 			}(),
-			expectedError: `\[networking\.machineNetwork\[0\]: Invalid value: "100\.64\.2\.0/24": must not overlap with OVNKubernetes default internal subnet 100\.64\.0\.0/16, networking\.machineNetwork\[1\]: Invalid value: "100\.88\.2\.0/24": must not overlap with OVNKubernetes default transit subnet 100\.88\.0\.0/16, networking\.machineNetwork\[2\]: Invalid value: "169\.254\.2\.0/24": must not overlap with OVNKubernetes default masquerade subnet 169\.254\.0\.0/17, networking\.machineNetwork\[3\]: Invalid value: "fd98::/48": must not overlap with OVNKubernetes default internal subnet fd98::/64, networking\.machineNetwork\[4\]: Invalid value: "fd97::/48": must not overlap with OVNKubernetes default transit subnet fd97::/64, networking\.machineNetwork\[5\]: Invalid value: "fd69::/48": must not overlap with OVNKubernetes default masquerade subnet fd69::/112\]`,
+			expectedError: `\[networking\.machineNetwork\[0\]: Invalid value: "100\.64\.2\.0/24": must not overlap with OVNKubernetes default internal subnet 100\.64\.0\.0/16: please run 'openshift-install explain installconfig.networking.ovnKubernetesConfig.ipv4' for further documentation, networking\.machineNetwork\[1\]: Invalid value: "100\.88\.2\.0/24": must not overlap with OVNKubernetes default transit subnet 100\.88\.0\.0/16, networking\.machineNetwork\[2\]: Invalid value: "169\.254\.2\.0/24": must not overlap with OVNKubernetes default masquerade subnet 169\.254\.0\.0/17, networking\.machineNetwork\[3\]: Invalid value: "fd98::/48": must not overlap with OVNKubernetes default internal subnet fd98::/64: please run 'openshift-install explain installconfig.networking.ovnKubernetesConfig.ipv6' for further documentation, networking\.machineNetwork\[4\]: Invalid value: "fd97::/48": must not overlap with OVNKubernetes default transit subnet fd97::/64, networking\.machineNetwork\[5\]: Invalid value: "fd69::/48": must not overlap with OVNKubernetes default masquerade subnet fd69::/112\]`,
 		},
 		{
 			name: "invalid cluster network",
@@ -659,7 +670,7 @@ func TestValidateInstallConfig(t *testing.T) {
 				}
 				return c
 			}(),
-			expectedError: `^\[networking\.clusterNetwork\[0\]\.cidr: Invalid value: "100\.64\.2\.0/24": must not overlap with OVNKubernetes default internal subnet 100\.64\.0\.0/16, networking\.clusterNetwork\[1\]\.cidr: Invalid value: "100\.88\.2\.0/24": must not overlap with OVNKubernetes default transit subnet 100\.88\.0\.0/16, networking\.clusterNetwork\[2\]\.cidr: Invalid value: "169\.254\.2\.0/24": must not overlap with OVNKubernetes default masquerade subnet 169\.254\.0\.0/17, networking\.clusterNetwork\[3\]\.cidr: Invalid value: "fd98::/48": must not overlap with OVNKubernetes default internal subnet fd98::/64, networking\.clusterNetwork\[4\]\.cidr: Invalid value: "fd97::/48": must not overlap with OVNKubernetes default transit subnet fd97::/64, networking\.clusterNetwork\[5\]\.cidr: Invalid value: "fd69::/48": must not overlap with OVNKubernetes default masquerade subnet fd69::/112\]$`,
+			expectedError: `^\[networking\.clusterNetwork\[0\]\.cidr: Invalid value: "100\.64\.2\.0/24": must not overlap with OVNKubernetes default internal subnet 100\.64\.0\.0/16: please run 'openshift-install explain installconfig.networking.ovnKubernetesConfig.ipv4' for further documentation, networking\.clusterNetwork\[1\]\.cidr: Invalid value: "100\.88\.2\.0/24": must not overlap with OVNKubernetes default transit subnet 100\.88\.0\.0/16, networking\.clusterNetwork\[2\]\.cidr: Invalid value: "169\.254\.2\.0/24": must not overlap with OVNKubernetes default masquerade subnet 169\.254\.0\.0/17, networking\.clusterNetwork\[3\]\.cidr: Invalid value: "fd98::/48": must not overlap with OVNKubernetes default internal subnet fd98::/64: please run 'openshift-install explain installconfig.networking.ovnKubernetesConfig.ipv6' for further documentation, networking\.clusterNetwork\[4\]\.cidr: Invalid value: "fd97::/48": must not overlap with OVNKubernetes default transit subnet fd97::/64, networking\.clusterNetwork\[5\]\.cidr: Invalid value: "fd69::/48": must not overlap with OVNKubernetes default masquerade subnet fd69::/112\]$`,
 		},
 		{
 			name: "cluster network host prefix too large",
@@ -864,7 +875,7 @@ func TestValidateInstallConfig(t *testing.T) {
 				c.Platform = types.Platform{}
 				return c
 			}(),
-			expectedError: `^platform: Invalid value: "": must specify one of the platforms \(aws, azure, baremetal, external, gcp, ibmcloud, none, nutanix, openstack, powervs, vsphere\)$`,
+			expectedError: `^platform: Invalid value: "": must specify one of the platforms \(aws, azure, baremetal, external, gcp, ibmcloud, none, nutanix, openstack, powervc, powervs, vsphere\)$`,
 		},
 		{
 			name: "multiple platforms",
@@ -1356,6 +1367,99 @@ func TestValidateInstallConfig(t *testing.T) {
 			expectedError: `^credentialsMode: Unsupported value: "Mint": supported values: "Manual"$`,
 		},
 		{
+			name: "valid azure cluster name",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					Azure: validAzurePlatform(),
+				}
+				c.ObjectMeta.Name = "test-cluster"
+				return c
+			}(),
+		},
+		{
+			name: "azure cluster name containing microsoft",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					Azure: validAzurePlatform(),
+				}
+				c.ObjectMeta.Name = "amicrosoft-test"
+				return c
+			}(),
+			expectedError: `^metadata\.name: Invalid value: "amicrosoft-test": cluster name must not contain the reserved word "microsoft"$`,
+		},
+		{
+			name: "azure cluster name containing windows",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					Azure: validAzurePlatform(),
+				}
+				c.ObjectMeta.Name = "windows-cluster"
+				return c
+			}(),
+			expectedError: `^metadata\.name: Invalid value: "windows-cluster": cluster name must not contain the reserved word "windows"$`,
+		},
+		{
+			name: "azure cluster name starting with login",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					Azure: validAzurePlatform(),
+				}
+				c.ObjectMeta.Name = "login-test"
+				return c
+			}(),
+			expectedError: `^metadata\.name: Invalid value: "login-test": cluster name must not start with the reserved word "login"$`,
+		},
+		{
+			name: "azure cluster name is exactly azure",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					Azure: validAzurePlatform(),
+				}
+				c.ObjectMeta.Name = "azure"
+				return c
+			}(),
+			expectedError: `^metadata\.name: Invalid value: "azure": cluster name must not be the reserved word "azure"$`,
+		},
+		{
+			name: "azure cluster name containing azure as substring",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					Azure: validAzurePlatform(),
+				}
+				c.ObjectMeta.Name = "myazure-env"
+				return c
+			}(),
+		},
+		{
+			name: "azure cluster name is exactly access",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					Azure: validAzurePlatform(),
+				}
+				c.ObjectMeta.Name = "access"
+				return c
+			}(),
+			expectedError: `^metadata\.name: Invalid value: "access": cluster name must not be the reserved word "access"$`,
+		},
+		{
+			name: "azure cluster name with login not at start",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					Azure: validAzurePlatform(),
+				}
+				c.ObjectMeta.Name = "bloginsystem"
+				return c
+			}(),
+		},
+		{
 			name: "release image source is not valid",
 			installConfig: func() *types.InstallConfig {
 				c := validInstallConfig()
@@ -1488,6 +1592,43 @@ func TestValidateInstallConfig(t *testing.T) {
 			}(),
 		},
 		{
+			name: "valid release image source ImageDigstSource with valid mirror and sourcePolicy",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.ImageDigestSources = []types.ImageDigestSource{{
+					Source:       "quay.io/ocp/release-x.y",
+					Mirrors:      []string{"mirror.example.com:5000"},
+					SourcePolicy: "NeverContactSource",
+				}}
+				return c
+			}(),
+		},
+		{
+			name: "valid release image source ImageDigstSource with no mirror and valid sourcePolicy",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.ImageDigestSources = []types.ImageDigestSource{{
+					Source:       "quay.io/ocp/release-x.y",
+					SourcePolicy: "NeverContactSource",
+				}}
+				return c
+			}(),
+			expectedError: `^imageDigestSources\[0\]\.sourcePolicy: Invalid value: "NeverContactSource": sourcePolicy cannot be configured without a mirror$`,
+		},
+		{
+			name: "valid release image source ImageDigstSource with invalid sourcePolicy",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.ImageDigestSources = []types.ImageDigestSource{{
+					Source:       "quay.io/ocp/release-x.y",
+					Mirrors:      []string{"mirror.example.com:5000"},
+					SourcePolicy: "InvalidPolicy",
+				}}
+				return c
+			}(),
+			expectedError: `^imageDigestSources\[0\]\.sourcePolicy: Invalid value: "InvalidPolicy": supported values are "NeverContactSource" and "AllowContactingSource"$`,
+		},
+		{
 			name: "error out ImageContentSources and ImageDigestSources and are set at the same time",
 			installConfig: func() *types.InstallConfig {
 				c := validInstallConfig()
@@ -1501,6 +1642,96 @@ func TestValidateInstallConfig(t *testing.T) {
 				return c
 			}(),
 			expectedError: `cannot set imageContentSources and imageDigestSources at the same time`,
+		},
+		{
+			name: "valid imageContentSources with mirror in pull secret",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.PullSecret = `{"auths":{"mirror.example.com":{"auth":"authorization value"}}}`
+				c.DeprecatedImageContentSources = []types.ImageContentSource{{
+					Source:  "q.io/ocp/source1",
+					Mirrors: []string{"mirror.example.com/ocp/release"},
+				}, {
+					Source:  "q.io/ocp/source2",
+					Mirrors: []string{"mirror.example.com/ocp/release"},
+				}}
+				return c
+			}(),
+		},
+		{
+			name: "imageContentSources with mirror with port not in pull secret - warning only",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.PullSecret = `{"auths":{"mirror.example.com:5000":{"auth":"authorization value"}}}`
+				c.DeprecatedImageContentSources = []types.ImageContentSource{{
+					Source:  "q.io/ocp/source1",
+					Mirrors: []string{"not-in-pullsecret-mirror.example.com:5000/ocp/release"},
+				}, {
+					Source:  "q.io/ocp/source2",
+					Mirrors: []string{"not-in-pullsecret-mirror.example.com:5000/ocp/release"},
+				}}
+				return c
+			}(),
+		},
+		{
+			name: "imageContentSources with mirror not in pull secret - warning only",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.PullSecret = `{"auths":{"mirror.example.com":{"auth":"authorization value"}}}`
+				c.DeprecatedImageContentSources = []types.ImageContentSource{{
+					Source:  "q.io/ocp/source1",
+					Mirrors: []string{"not-in-pullsecret-mirror.example.com/ocp/release"},
+				}, {
+					Source:  "q.io/ocp/source2",
+					Mirrors: []string{"not-in-pullsecret-mirror.example.com/ocp/release"},
+				}}
+				return c
+			}(),
+		},
+		{
+			name: "valid imageDigestSources with mirror in pull secret",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.PullSecret = `{"auths":{"mirror.example.com":{"auth":"authorization value"}}}`
+				c.ImageDigestSources = []types.ImageDigestSource{{
+					Source:  "q.io/ocp/source1",
+					Mirrors: []string{"mirror.example.com/ocp/release"},
+				}, {
+					Source:  "q.io/ocp/source2",
+					Mirrors: []string{"mirror.example.com/ocp/release"},
+				}}
+				return c
+			}(),
+		},
+		{
+			name: "imageDigestSources with mirror with port not in pull secret - warning only",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.PullSecret = `{"auths":{"mirror.example.com:5000":{"auth":"authorization value"}}}`
+				c.ImageDigestSources = []types.ImageDigestSource{{
+					Source:  "q.io/ocp/source1",
+					Mirrors: []string{"not-in-pullsecret-mirror.example.com:5000/ocp/release"},
+				}, {
+					Source:  "q.io/ocp/source2",
+					Mirrors: []string{"not-in-pullsecret-mirror.example.com:5000/ocp/release"},
+				}}
+				return c
+			}(),
+		},
+		{
+			name: "imageDigestSources with mirror not in pull secret - warning only",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.PullSecret = `{"auths":{"mirror.example.com":{"auth":"authorization value"}}}`
+				c.ImageDigestSources = []types.ImageDigestSource{{
+					Source:  "q.io/ocp/source1",
+					Mirrors: []string{"not-in-pullsecret-mirror.example.com/ocp/release"},
+				}, {
+					Source:  "q.io/ocp/source2",
+					Mirrors: []string{"not-in-pullsecret-mirror.example.com/ocp/release"},
+				}}
+				return c
+			}(),
 		},
 		{
 			name: "invalid publishing strategy",
@@ -1565,7 +1796,7 @@ func TestValidateInstallConfig(t *testing.T) {
 			name: "invalid dual-stack configuration, IPv6-primary",
 			installConfig: func() *types.InstallConfig {
 				c := validInstallConfig()
-				c.Platform = types.Platform{None: &none.Platform{}}
+				c.Platform = types.Platform{GCP: &gcp.Platform{}}
 				c.Networking = validDualStackNetworkingConfig()
 				c.Networking.ServiceNetwork = []ipnet.IPNet{
 					c.Networking.ServiceNetwork[1],
@@ -1590,6 +1821,121 @@ func TestValidateInstallConfig(t *testing.T) {
 				// ClusterNetwork is now "IPv4, IPv6, IPv4", which is allowed
 				return c
 			}(),
+		},
+		{
+			name: "aws: valid dual-stack with DualStackIPv4Primary",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.FeatureSet = configv1.TechPreviewNoUpgrade
+				c.Platform.AWS.IPFamily = network.DualStackIPv4Primary
+				c.Networking = validDualStackNetworkingConfig()
+				return c
+			}(),
+		},
+		{
+			name: "aws: valid AWS dual-stack with DualStackIPv6Primary",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.FeatureSet = configv1.TechPreviewNoUpgrade
+				c.Platform.AWS.IPFamily = network.DualStackIPv6Primary
+				c.Networking = validPrimaryV6DualStackNetworkingConfig()
+				return c
+			}(),
+		},
+		{
+			name: "aws: valid dual-stack with DualStackIPv4Primary and only IPv4 machineNetwork (IPv6 auto-assigned)",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.FeatureSet = configv1.TechPreviewNoUpgrade
+				c.Platform.AWS.IPFamily = network.DualStackIPv4Primary
+				c.Networking = validDualStackNetworkingConfig()
+				c.Networking.MachineNetwork = c.Networking.MachineNetwork[:1]
+				return c
+			}(),
+		},
+		{
+			name: "aws: invalid AWS dual-stack without ipFamily set",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				// IPFamily not set on AWS platform
+				c.Networking = validDualStackNetworkingConfig()
+				return c
+			}(),
+			expectedError: `networking: Invalid value: "DualStack": dual-stack IPv4/IPv6 can only be specified when platform.aws.ipFamily is DualStackIPv4Primary or DualStackIPv6Primary`,
+		},
+		{
+			name: "aws: invalid dual-stack with DualStackIPv4Primary but IPv6-primary networks",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.FeatureSet = configv1.TechPreviewNoUpgrade
+				c.Platform.AWS.IPFamily = "DualStackIPv4Primary"
+				c.Networking = validPrimaryV6DualStackNetworkingConfig()
+				return c
+			}(),
+			expectedError: `^\Q[networking.clusterNetwork: Invalid value: "ffd2::/48, 192.168.1.0/24": DualStackIPv4Primary requires an IPv4 network first in this list, networking.machineNetwork: Invalid value: "ffd0::/48, 10.0.0.0/16": DualStackIPv4Primary requires an IPv4 network first in this list, networking.serviceNetwork: Invalid value: "ffd1::/112, 172.30.0.0/16": DualStackIPv4Primary requires an IPv4 network first in this list]\E$`,
+		},
+		{
+			name: "aws: invalid dual-stack with DualStackIPv6Primary but IPv4-primary networks",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.FeatureSet = configv1.TechPreviewNoUpgrade
+				c.Platform.AWS.IPFamily = "DualStackIPv6Primary"
+				c.Networking = validDualStackNetworkingConfig()
+				return c
+			}(),
+			expectedError: `^\Q[networking.clusterNetwork: Invalid value: "192.168.1.0/24, ffd2::/48": DualStackIPv6Primary requires an IPv6 network first in this list, networking.machineNetwork: Invalid value: "10.0.0.0/16, ffd0::/48": DualStackIPv6Primary requires an IPv6 network first in this list, networking.serviceNetwork: Invalid value: "172.30.0.0/16, ffd1::/112": DualStackIPv6Primary requires an IPv6 network first in this list]\E$`,
+		},
+		{
+			name: "aws: invalid dual-stack with DualStackIPv4Primary but only IPv4 serviceNetwork",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.FeatureSet = configv1.TechPreviewNoUpgrade
+				c.Platform.AWS.IPFamily = network.DualStackIPv4Primary
+				c.Networking = validDualStackNetworkingConfig()
+				// Remove IPv6 service network, leaving only IPv4
+				c.Networking.ServiceNetwork = c.Networking.ServiceNetwork[:1]
+				return c
+			}(),
+			expectedError: `networking.serviceNetwork: Invalid value: "172.30.0.0/16": when installing dual-stack IPv4/IPv6 you must provide two service networks, one for each IP address type`,
+		},
+		{
+			name: "aws: invalid dual-stack with DualStackIPv4Primary but only IPv6 serviceNetwork",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.FeatureSet = configv1.TechPreviewNoUpgrade
+				c.Platform.AWS.IPFamily = network.DualStackIPv4Primary
+				c.Networking = validDualStackNetworkingConfig()
+				// Remove IPv4 service network, leaving only IPv6
+				c.Networking.ServiceNetwork = c.Networking.ServiceNetwork[1:]
+				return c
+			}(),
+			expectedError: `networking.serviceNetwork: Invalid value: "ffd1::/112": when installing dual-stack IPv4/IPv6 you must provide two service networks, one for each IP address type`,
+		},
+		{
+			name: "aws: invalid dual-stack with DualStackIPv6Primary but only IPv4 serviceNetwork",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.FeatureSet = configv1.TechPreviewNoUpgrade
+				c.Platform.AWS.IPFamily = network.DualStackIPv6Primary
+				c.Networking = validPrimaryV6DualStackNetworkingConfig()
+				// Remove IPv6 service network, leaving only IPv4
+				c.Networking.ServiceNetwork = c.Networking.ServiceNetwork[1:]
+				return c
+			}(),
+			expectedError: `networking.serviceNetwork: Invalid value: "172.30.0.0/16": when installing dual-stack IPv4/IPv6 you must provide two service networks, one for each IP address type`,
+		},
+		{
+			name: "aws: invalid dual-stack with DualStackIPv6Primary but only IPv6 serviceNetwork",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.FeatureSet = configv1.TechPreviewNoUpgrade
+				c.Platform.AWS.IPFamily = network.DualStackIPv6Primary
+				c.Networking = validPrimaryV6DualStackNetworkingConfig()
+				// Remove IPv4 service network, leaving only IPv6
+				c.Networking.ServiceNetwork = c.Networking.ServiceNetwork[:1]
+				return c
+			}(),
+			expectedError: `networking.serviceNetwork: Invalid value: "ffd1::/112": when installing dual-stack IPv4/IPv6 you must provide two service networks, one for each IP address type`,
 		},
 		{
 			name: "invalid IPv6 hostprefix",
@@ -1794,7 +2140,7 @@ func TestValidateInstallConfig(t *testing.T) {
 					AdditionalEnabledCapabilities: []configv1.ClusterVersionCapability{"marketplace"}}
 				return c
 			}(),
-			expectedError: `additionalEnabledCapabilities: Invalid value: \[\]v1.ClusterVersionCapability{"marketplace"}: the marketplace capability requires the OperatorLifecycleManager capability`,
+			expectedError: `additionalEnabledCapabilities: Invalid value: \["marketplace"\]: the marketplace capability requires the OperatorLifecycleManager capability`,
 		},
 		{
 			name: "valid additional enabled capability specified",
@@ -1835,7 +2181,7 @@ func TestValidateInstallConfig(t *testing.T) {
 				c.Capabilities = &types.Capabilities{BaselineCapabilitySet: "None", AdditionalEnabledCapabilities: []configv1.ClusterVersionCapability{"marketplace"}}
 				return c
 			}(),
-			expectedError: `additionalEnabledCapabilities: Invalid value: \[\]v1.ClusterVersionCapability{"marketplace"}: platform baremetal requires the baremetal capability`,
+			expectedError: `additionalEnabledCapabilities: Invalid value: \["marketplace"\]: platform baremetal requires the baremetal capability`,
 		},
 		// VIP tests
 		{
@@ -1998,7 +2344,7 @@ func TestValidateInstallConfig(t *testing.T) {
 
 				return c
 			}(),
-			expectedError: "platform.baremetal.apiVIPs: Invalid value: \\[\\]string\\{\"192.168.111.1\", \"192.168.111.2\"\\}: If two API VIPs are given, one must be an IPv4 address, the other an IPv6",
+			expectedError: "platform.baremetal.apiVIPs: Invalid value: \\[\"192.168.111.1\",\"192.168.111.2\"\\]: If two API VIPs are given, one must be an IPv4 address, the other an IPv6",
 		},
 		{
 			name: "invalid_apis_both_ipv6",
@@ -2011,7 +2357,7 @@ func TestValidateInstallConfig(t *testing.T) {
 
 				return c
 			}(),
-			expectedError: "platform.baremetal.apiVIPs: Invalid value: \\[\\]string\\{\"fe80::1\", \"fe80::2\"\\}: If two API VIPs are given, one must be an IPv4 address, the other an IPv6",
+			expectedError: "platform.baremetal.apiVIPs: Invalid value: \\[\"fe80::1\",\"fe80::2\"\\]: If two API VIPs are given, one must be an IPv4 address, the other an IPv6",
 		},
 		{
 			name: "ingressvip_v4_not_in_machinenetwork_cidr",
@@ -2127,7 +2473,7 @@ func TestValidateInstallConfig(t *testing.T) {
 
 				return c
 			}(),
-			expectedError: "platform.baremetal.ingressVIPs: Invalid value: \\[\\]string\\{\"192.168.111.4\", \"192.168.111.5\"\\}: If two Ingress VIPs are given, one must be an IPv4 address, the other an IPv6",
+			expectedError: "platform.baremetal.ingressVIPs: Invalid value: \\[\"192.168.111.4\",\"192.168.111.5\"\\]: If two Ingress VIPs are given, one must be an IPv4 address, the other an IPv6",
 		},
 		{
 			name: "invalid_ingressvips_both_ipv6",
@@ -2140,7 +2486,7 @@ func TestValidateInstallConfig(t *testing.T) {
 
 				return c
 			}(),
-			expectedError: "platform.baremetal.ingressVIPs: Invalid value: \\[\\]string\\{\"fe80::1\", \"fe80::2\"\\}: If two Ingress VIPs are given, one must be an IPv4 address, the other an IPv6",
+			expectedError: "platform.baremetal.ingressVIPs: Invalid value: \\[\"fe80::1\",\"fe80::2\"\\]: If two Ingress VIPs are given, one must be an IPv4 address, the other an IPv6",
 		},
 		{
 			name: "identical_apivip_ingressvip",
@@ -2244,7 +2590,12 @@ func TestValidateInstallConfig(t *testing.T) {
 			name: "baremetal API VIP set to an incorrect IP Family with invalid primary IPv6 network",
 			installConfig: func() *types.InstallConfig {
 				c := validInstallConfig()
-				c.Networking = InvalidPrimaryV6DualStackNetworkingConfig()
+				c.Networking = validPrimaryV6DualStackNetworkingConfig()
+				// Make service network IPv6-primary (wrong order)
+				c.Networking.ServiceNetwork = []ipnet.IPNet{
+					c.Networking.ServiceNetwork[1],
+					c.Networking.ServiceNetwork[0],
+				}
 				c.Platform = types.Platform{
 					BareMetal: validBareMetalPlatform(),
 				}
@@ -2270,7 +2621,12 @@ func TestValidateInstallConfig(t *testing.T) {
 			name: "baremetal Ingress VIP set to an incorrect IP Family with invalid primary IPv6 network",
 			installConfig: func() *types.InstallConfig {
 				c := validInstallConfig()
-				c.Networking = InvalidPrimaryV6DualStackNetworkingConfig()
+				c.Networking = validPrimaryV6DualStackNetworkingConfig()
+				// Make service network IPv6-primary (wrong order)
+				c.Networking.ServiceNetwork = []ipnet.IPNet{
+					c.Networking.ServiceNetwork[1],
+					c.Networking.ServiceNetwork[0],
+				}
 				c.Platform = types.Platform{
 					BareMetal: validBareMetalPlatform(),
 				}
@@ -2659,15 +3015,107 @@ func TestValidateInstallConfig(t *testing.T) {
 			}(),
 			expectedError: "the Ingress capability is required",
 		},
+		{
+			name: "invalid OSImageStream set",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				types.SCOS = true
+				c.FeatureSet = configv1.TechPreviewNoUpgrade
+				c.OSImageStream = "rhel-10"
+
+				return c
+			}(),
+			expectedError: "OS Image Streams are only supported on OCP clusters using RHCOS",
+			restoreFnFactory: func(config *types.InstallConfig) func() {
+				old := types.SCOS
+				return func() {
+					types.SCOS = old
+				}
+			},
+		},
+		{
+			name: "invalid OSImageStream set",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.FeatureSet = configv1.TechPreviewNoUpgrade
+				c.OSImageStream = "invalid"
+				return c
+			}(),
+			expectedError: "Unsupported OS Image Stream. Supported values are: rhel-9, rhel-10",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.restoreFnFactory != nil {
+				// Call the FN getter to allow restore function to grab
+				// pre-test values if needed
+				fn := tc.restoreFnFactory(tc.installConfig)
+				defer fn()
+			}
+
 			err := ValidateInstallConfig(tc.installConfig, false).ToAggregate()
 			if tc.expectedError == "" {
 				assert.NoError(t, err)
 			} else {
 				assert.Regexp(t, tc.expectedError, err)
 			}
+		})
+	}
+}
+
+func Test_extractRegistryHost(t *testing.T) {
+	tests := []struct {
+		name       string
+		repository string
+		want       string
+		wantErr    bool
+	}{
+		{
+			name:       "custom registry with port",
+			repository: "registry.example.com:5000/namespace/repo",
+			want:       "registry.example.com:5000",
+			wantErr:    false,
+		},
+		{
+			name:       "quay.io registry",
+			repository: "quay.io/openshift/release",
+			want:       "quay.io",
+			wantErr:    false,
+		},
+		{
+			name:       "IP address with custom port",
+			repository: "192.168.1.1:8080/myimage",
+			want:       "192.168.1.1:8080",
+			wantErr:    false,
+		},
+		{
+			name:       "single domain name - non-canonical",
+			repository: "registry.example.com",
+			want:       "registry.example.com",
+			wantErr:    false,
+		},
+		{
+			name:       "simple name with namespace - non-canonical",
+			repository: "ocp/release",
+			want:       "ocp/release",
+			wantErr:    false,
+		},
+		{
+			name:       "invalid registry host with leading/trailing hyphens",
+			repository: "--invalid--/repo",
+			want:       "",
+			wantErr:    true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := extractRegistryHost(tt.repository)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
@@ -2940,11 +3388,11 @@ func TestValidateTNF(t *testing.T) {
 				PlatformBMWithHosts().
 				MachinePoolCP(machinePool().
 					Credential(
-						c1().FencingCredentialAddress("ipmi://192.168.111.1"),
-						c2().FencingCredentialAddress("ipmi://192.168.111.1"))).
+						c1().FencingCredentialAddress("redfish+https://192.168.111.1/redfish/v1/Systems/1"),
+						c2().FencingCredentialAddress("redfish+https://192.168.111.1/redfish/v1/Systems/1"))).
 				CpReplicas(2).build(),
 			name:     "fencing_credential_address_not_unique",
-			expected: "controlPlane.fencing.credentials\\[1\\].address: Duplicate value: \"ipmi://192.168.111.1\"",
+			expected: "controlPlane.fencing.credentials\\[1\\].address: Duplicate value: \"redfish\\+https://192.168.111.1/redfish/v1/Systems/1\"",
 		},
 		{
 			config: installConfig().
@@ -2977,10 +3425,87 @@ func TestValidateTNF(t *testing.T) {
 			config: installConfig().
 				PlatformBMWithHosts().
 				MachinePoolCP(machinePool().
+					Credential(
+						c1().FencingCredentialAddress("ipmi://192.168.111.1"),
+						c2().FencingCredentialAddress("ipmi://192.168.111.2"))).
+				CpReplicas(2).build(),
+			name:     "fencing_credential_ipmi_not_supported",
+			expected: "controlPlane.fencing.credentials\\[0\\].address: Invalid value: \"ipmi://192.168.111.1\": fencing only supports redfish-compatible BMC addresses, IPMI is not supported",
+		},
+		{
+			config: installConfig().
+				PlatformBMWithHosts().
+				MachinePoolCP(machinePool().
 					Credential(c1().HostName(""), c2())).
 				CpReplicas(2).build(),
 			name:     "fencing_credential_host_name_required",
 			expected: "controlPlane.fencing.credentials\\[0\\].hostName: Required value: missing HostName",
+		},
+		{
+			config: installConfig().
+				PlatformBMWithHosts().
+				MachinePoolCP(machinePool().
+					Credential(
+						c1().FencingCredentialAddress("idrac-redfish://192.168.111.1/redfish/v1/Systems/1"),
+						c2().FencingCredentialAddress("ilo5-redfish+https://192.168.111.2/redfish/v1/Systems/1"))).
+				CpReplicas(2).build(),
+			name:     "fencing_credential_various_redfish_addresses",
+			expected: "",
+		},
+		{
+			config: installConfig().
+				PlatformBMWithHosts().
+				MachinePoolCP(machinePool().
+					Credential(
+						c1().FencingCredentialAddress("not a valid url at all"),
+						c2())).
+				CpReplicas(2).build(),
+			name:     "fencing_credential_invalid_url",
+			expected: "controlPlane.fencing.credentials\\[0\\].address: Invalid value: \"not a valid url at all\": fencing only supports redfish-compatible BMC addresses, IPMI is not supported",
+		},
+		{
+			config: installConfig().
+				PlatformBMWithHosts().
+				MachinePoolCP(machinePool().
+					Credential(
+						c1().FencingCredentialAddress("https://192.168.111.1:8000/redfish/v1/Systems/1"),
+						c2().FencingCredentialAddress("https://192.168.111.2:8000/redfish/v1/Systems/2"))).
+				CpReplicas(2).build(),
+			name:     "fencing_credential_https_with_redfish_path",
+			expected: "",
+		},
+		{
+			config: installConfig().
+				PlatformBMWithHosts().
+				MachinePoolCP(machinePool().
+					Credential(
+						c1().FencingCredentialAddress("http://192.168.111.1/redfish/v1/Systems/1"),
+						c2().FencingCredentialAddress("http://192.168.111.2/redfish/v1/Systems/2"))).
+				CpReplicas(2).build(),
+			name:     "fencing_credential_http_no_port",
+			expected: "",
+		},
+		{
+			config: installConfig().
+				PlatformBMWithHosts().
+				MachinePoolCP(machinePool().
+					Credential(
+						c1().FencingCredentialAddress("https://192.168.111.1/redfish/v1/Systems/1"),
+						c2().FencingCredentialAddress("https://192.168.111.2/redfish/v1/Systems/2"))).
+				CpReplicas(2).build(),
+			name:     "fencing_credential_https_no_port",
+			expected: "",
+		},
+		{
+			config: installConfig().
+				PlatformBMWithHosts().
+				MachinePoolCP(machinePool().
+					Credential(
+						c1().FencingCredentialAddress("idrac-redfish://192.168.111.1/redfish/v1/Systems/1"),
+						c2().FencingCredentialAddress("ilo5-redfish://192.168.111.2/redfish/v1/Systems/2"))).
+				CpReplicas(2).build(),
+			name:     "fencing_credential_redfish_scheme_no_port",
+			expected: "",
 		},
 		{
 			config: installConfig().
@@ -2997,7 +3522,7 @@ func TestValidateTNF(t *testing.T) {
 				CpReplicas(2).build(),
 			name:         "fencing_only_valid_for_control_plane",
 			checkCompute: true,
-			expected:     `compute\[\d+\]\.fencing: Invalid value: types\.Fencing\{Credentials:\[\]\*types\.Credential\{\(\*types\.Credential\)\(\S+\)\}\}: fencing is only valid for control plane`,
+			expected:     `compute\[\d+\]\.fencing: Invalid value: \{"credentials":\[\{"hostName":"host1","username":"root","password":"password","address":"redfish\+https://192.168.111.1/redfish/v1/Systems/1"\}\]\}: fencing is only valid for control plane`,
 		},
 		{
 			config: installConfig().
@@ -3047,8 +3572,121 @@ func TestValidateTNF(t *testing.T) {
 			if tc.checkCompute {
 				err = validateCompute(&tc.config.Platform, tc.config.ControlPlane, tc.config.Compute, field.NewPath("compute")).ToAggregate()
 			} else {
-				err = validateFencingCredentials(tc.config).ToAggregate()
+				err = validateFencingCredentialsAndPlatform(tc.config).ToAggregate()
 			}
+
+			if tc.expected == "" {
+				assert.NoError(t, err)
+			} else {
+				assert.Regexp(t, tc.expected, err)
+			}
+		})
+	}
+}
+
+func TestValidateArbiter(t *testing.T) {
+	cases := []struct {
+		name     string
+		config   *types.InstallConfig
+		expected string
+	}{
+		{
+			config: installConfig().
+				PlatformNone().
+				MachinePoolArbiter(
+					machinePool().
+						Name("arbiter").
+						Hyperthreading(types.HyperthreadingEnabled).
+						Architecture(types.ArchitectureAMD64)).
+				MachinePoolCP(machinePool()).
+				ArbiterReplicas(1).
+				CpReplicas(2).build(),
+			name:     "valid_platform_none",
+			expected: "",
+		},
+		{
+			config: installConfig().
+				PlatformBMWithHosts().
+				MachinePoolArbiter(
+					machinePool().
+						Name("arbiter").
+						Hyperthreading(types.HyperthreadingEnabled).
+						Architecture(types.ArchitectureAMD64)).
+				MachinePoolCP(machinePool()).
+				ArbiterReplicas(1).
+				CpReplicas(2).build(),
+			name:     "valid_platform_baremetal",
+			expected: "",
+		},
+		{
+			config: installConfig().
+				PlatformExternal().
+				MachinePoolArbiter(
+					machinePool().
+						Name("arbiter").
+						Hyperthreading(types.HyperthreadingEnabled).
+						Architecture(types.ArchitectureAMD64)).
+				MachinePoolCP(machinePool()).
+				ArbiterReplicas(1).
+				CpReplicas(2).build(),
+			name:     "valid_platform_external",
+			expected: "",
+		},
+		{
+			config: installConfig().
+				PlatformAWS().
+				MachinePoolArbiter(machinePool().
+					Name("arbiter").
+					Hyperthreading(types.HyperthreadingEnabled).
+					Architecture(types.ArchitectureAMD64)).
+				MachinePoolCP(machinePool()).
+				ArbiterReplicas(1).
+				CpReplicas(2).build(),
+			name:     "invalid_platform",
+			expected: `supported values: "baremetal", "external", "none"`,
+		},
+		{
+			config: installConfig().
+				PlatformNone().
+				MachinePoolArbiter(machinePool().
+					Hyperthreading(types.HyperthreadingEnabled).
+					Architecture(types.ArchitectureAMD64)).
+				MachinePoolCP(machinePool()).
+				ArbiterReplicas(1).
+				CpReplicas(2).build(),
+			name:     "invalid_arbiter_machine_pool_name",
+			expected: `arbiter.name: Unsupported value:`,
+		},
+		{
+			config: installConfig().
+				PlatformNone().
+				MachinePoolArbiter(machinePool().
+					Name("arbiter").
+					Hyperthreading(types.HyperthreadingEnabled).
+					Architecture(types.ArchitectureAMD64)).
+				MachinePoolCP(machinePool()).
+				ArbiterReplicas(0).
+				CpReplicas(2).build(),
+			name:     "invalid_arbiter_machine_pool_size",
+			expected: `arbiter.replicas: Invalid value:`,
+		},
+		{
+			config: installConfig().
+				PlatformNone().
+				MachinePoolArbiter(machinePool().
+					Name("arbiter").
+					Hyperthreading(types.HyperthreadingEnabled).
+					Architecture(types.ArchitectureAMD64)).
+				MachinePoolCP(machinePool()).
+				ArbiterReplicas(1).
+				CpReplicas(1).build(),
+			name:     "invalid_master_machine_pool_size",
+			expected: `number of controlPlane replicas must be at least 2`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateArbiter(&tc.config.Platform, tc.config.Arbiter, tc.config.ControlPlane, field.NewPath("arbiter")).ToAggregate()
 
 			if tc.expected == "" {
 				assert.NoError(t, err)
@@ -3073,7 +3711,7 @@ func c1() *credentialBuilder {
 			HostName: "host1",
 			Username: "root",
 			Password: "password",
-			Address:  "ipmi://192.168.111.1",
+			Address:  "redfish+https://192.168.111.1/redfish/v1/Systems/1",
 		},
 	}
 }
@@ -3084,7 +3722,7 @@ func c2() *credentialBuilder {
 			HostName: "host2",
 			Username: "root",
 			Password: "password",
-			Address:  "ipmi://192.168.111.2",
+			Address:  "redfish+https://192.168.111.2/redfish/v1/Systems/1",
 		},
 	}
 }
@@ -3095,7 +3733,7 @@ func c3() *credentialBuilder {
 			HostName: "host3",
 			Username: "root",
 			Password: "password",
-			Address:  "ipmi://192.168.111.3",
+			Address:  "redfish+https://192.168.111.3/redfish/v1/Systems/1",
 		},
 	}
 }

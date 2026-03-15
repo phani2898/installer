@@ -5,72 +5,31 @@ import (
 	"fmt"
 	"time"
 
-	awsv2 "github.com/aws/aws-sdk-go-v2/aws"
-	cfgv2 "github.com/aws/aws-sdk-go-v2/config"
-	ec2v2 "github.com/aws/aws-sdk-go-v2/service/ec2"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/ec2"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 )
 
-func setUserCredsInConfig(ctx context.Context) (awsv2.Config, error) {
-	if err := getUserCredentials(); err != nil {
-		return awsv2.Config{}, err
-	}
-	cfg, err := cfgv2.LoadDefaultConfig(ctx, cfgv2.WithRegion("us-east-1"))
-	if err != nil {
-		return awsv2.Config{}, fmt.Errorf("failed to create AWS config: %w", err)
-	}
-	return cfg, nil
-}
-
 // GetRegions get all regions that are accessible.
-func GetRegions(ctx context.Context) ([]string, error) {
-	// Create a basic/default config. The function is currently called during the survey.
-	// Pass the default region (used for survey purposes) as the region here. Without a region
-	// the DescribeRegions call will fail immediately.
-	cfg, err := cfgv2.LoadDefaultConfig(ctx, cfgv2.WithRegion("us-east-1"))
-	if err != nil {
-		cfg, err = setUserCredsInConfig(ctx)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	if _, err = cfg.Credentials.Retrieve(ctx); err != nil {
-		cfg, err = setUserCredsInConfig(ctx)
-		if err != nil {
-			return nil, err
-		}
-	}
-	client := ec2v2.NewFromConfig(cfg)
-
-	output, err := client.DescribeRegions(ctx, &ec2v2.DescribeRegionsInput{AllRegions: aws.Bool(true)})
+func GetRegions(ctx context.Context, client *ec2.Client) ([]string, error) {
+	output, err := client.DescribeRegions(ctx, &ec2.DescribeRegionsInput{AllRegions: aws.Bool(true)})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get all regions: %w", err)
 	}
 
 	regions := []string{}
 	for _, region := range output.Regions {
-		regions = append(regions, *region.RegionName)
+		regions = append(regions, aws.ToString(region.RegionName))
 	}
 	return regions, nil
 }
 
 // DescribeSecurityGroups returns the list of ec2 Security Groups that contain the group id and vpc id.
-func DescribeSecurityGroups(ctx context.Context, session *session.Session, securityGroupIDs []string, region string) ([]*ec2.SecurityGroup, error) {
-	client := ec2.New(session, aws.NewConfig().WithRegion(region))
-
-	sgIDPtrs := []*string{}
-	for _, sgid := range securityGroupIDs {
-		sgid := sgid
-		sgIDPtrs = append(sgIDPtrs, &sgid)
-	}
-
+func DescribeSecurityGroups(ctx context.Context, client *ec2.Client, securityGroupIDs []string) ([]ec2types.SecurityGroup, error) {
 	cctx, cancel := context.WithTimeout(ctx, 1*time.Minute)
 	defer cancel()
 
-	sgOutput, err := client.DescribeSecurityGroupsWithContext(cctx, &ec2.DescribeSecurityGroupsInput{GroupIds: sgIDPtrs})
+	sgOutput, err := client.DescribeSecurityGroups(cctx, &ec2.DescribeSecurityGroupsInput{GroupIds: securityGroupIDs})
 	if err != nil {
 		return nil, err
 	}
@@ -78,13 +37,11 @@ func DescribeSecurityGroups(ctx context.Context, session *session.Session, secur
 }
 
 // DescribePublicIpv4Pool returns the ec2 public IPv4 Pool attributes from the given ID.
-func DescribePublicIpv4Pool(ctx context.Context, session *session.Session, region string, poolID string) (*ec2.PublicIpv4Pool, error) {
-	client := ec2.New(session, aws.NewConfig().WithRegion(region))
-
+func DescribePublicIpv4Pool(ctx context.Context, client *ec2.Client, poolID string) (*ec2types.PublicIpv4Pool, error) {
 	cctx, cancel := context.WithTimeout(ctx, 1*time.Minute)
 	defer cancel()
 
-	poolOutputs, err := client.DescribePublicIpv4PoolsWithContext(cctx, &ec2.DescribePublicIpv4PoolsInput{PoolIds: []*string{aws.String(poolID)}})
+	poolOutputs, err := client.DescribePublicIpv4Pools(cctx, &ec2.DescribePublicIpv4PoolsInput{PoolIds: []string{poolID}})
 	if err != nil {
 		return nil, err
 	}
@@ -95,5 +52,7 @@ func DescribePublicIpv4Pool(ctx context.Context, session *session.Session, regio
 	if len(poolOutputs.PublicIpv4Pools) > 1 {
 		return nil, fmt.Errorf("more than one Public IPv4 Pool: %s", poolID)
 	}
-	return poolOutputs.PublicIpv4Pools[0], nil
+
+	pool := poolOutputs.PublicIpv4Pools[0]
+	return &pool, nil
 }

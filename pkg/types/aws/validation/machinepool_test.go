@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	"k8s.io/utils/ptr"
 
 	"github.com/openshift/installer/pkg/types/aws"
 )
@@ -73,7 +74,7 @@ func TestValidateMachinePool(t *testing.T) {
 					IOPS: 10000,
 				},
 			},
-			expected: fmt.Sprintf("test-path.iops: Invalid value: 10000: iops not supported for type gp2"),
+			expected: "test-path.iops: Invalid value: 10000: iops not supported for type gp2",
 		},
 		{
 			name: "invalid zone",
@@ -95,18 +96,7 @@ func TestValidateMachinePool(t *testing.T) {
 					Size: 128,
 				},
 			},
-			expected: fmt.Sprintf("test-path.type: Invalid value: \"bad-volume-type\": failed to find volume type bad-volume-type"),
-		},
-		{
-			name: "invalid volume size using zero",
-			pool: &aws.MachinePool{
-				EC2RootVolume: aws.EC2RootVolume{
-					Type: "io2",
-					Size: 0,
-					IOPS: 10000,
-				},
-			},
-			expected: fmt.Sprintf("test-path.size: Invalid value: 0: volume size value must be a positive number"),
+			expected: "test-path.type: Invalid value: \"bad-volume-type\": failed to find volume type bad-volume-type",
 		},
 		{
 			name: "invalid volume size using negative",
@@ -117,7 +107,7 @@ func TestValidateMachinePool(t *testing.T) {
 					IOPS: 10000,
 				},
 			},
-			expected: fmt.Sprintf("test-path.size: Invalid value: -1: volume size value must be a positive number"),
+			expected: "test-path.size: Invalid value: -1: volume size value must be a positive number",
 		},
 		{
 			name: "invalid metadata auth option",
@@ -127,6 +117,114 @@ func TestValidateMachinePool(t *testing.T) {
 				},
 			},
 			expected: `^test-path\.authentication: Invalid value: \"foobarbaz\": must be either Required or Optional$`,
+		},
+		{
+			name: "valid root volume throughput with sufficient iops",
+			pool: &aws.MachinePool{
+				EC2RootVolume: aws.EC2RootVolume{
+					Type:       "gp3",
+					Size:       100,
+					Throughput: ptr.To(int32(1200)),
+					IOPS:       4800, // 1200 / 4800 = 0.25, which is the maximum allowed ratio
+				},
+			},
+		},
+		{
+			name: "valid root volume throughput with default iops (within ratio)",
+			pool: &aws.MachinePool{
+				EC2RootVolume: aws.EC2RootVolume{
+					Type:       "gp3",
+					Size:       100,
+					Throughput: ptr.To(int32(750)), // 750 / 3000 = 0.25, which is the maximum allowed ratio
+				},
+			},
+		},
+		{
+			name: "invalid root volume throughput, exceeds ratio with default iops",
+			pool: &aws.MachinePool{
+				EC2RootVolume: aws.EC2RootVolume{
+					Type:       "gp3",
+					Size:       100,
+					Throughput: ptr.To(int32(1200)), // 1200 / 3000 = 0.4 > 0.25
+				},
+			},
+			expected: `^test-path\.throughput: Invalid value: 1200: throughput \(MiBps\) to iops ratio of 0\.400000 is too high; maximum is 0\.250000 MiBps per iops\. When iops is not set, AWS defaults to 3000 iops\. Please set iops to at least 4800 to satisfy the constraint$`,
+		},
+		{
+			name: "invalid root volume throughput, exceeds ratio with explicit iops",
+			pool: &aws.MachinePool{
+				EC2RootVolume: aws.EC2RootVolume{
+					Type:       "gp3",
+					Size:       100,
+					Throughput: ptr.To(int32(1000)),
+					IOPS:       3000, // 1000 / 3000 = 0.333 > 0.25
+				},
+			},
+			expected: `^test-path\.throughput: Invalid value: 1000: throughput \(MiBps\) to iops ratio of 0\.333333 is too high; maximum is 0\.250000 MiBps per iops\. When iops is not set, AWS defaults to 3000 iops\. Please set iops to at least 4000 to satisfy the constraint$`,
+		},
+		{
+			name: "valid root volume throughput, nil or unspecified",
+			pool: &aws.MachinePool{
+				EC2RootVolume: aws.EC2RootVolume{
+					Type: "gp3",
+					Size: 100,
+				},
+			},
+		},
+		{
+			name: "invalid root volume throughput, below minimum",
+			pool: &aws.MachinePool{
+				EC2RootVolume: aws.EC2RootVolume{
+					Type:       "gp3",
+					Size:       100,
+					Throughput: ptr.To(int32(124)),
+				},
+			},
+			expected: `^test-path\.throughput: Invalid value: 124: throughput must be between 125 MiB/s and 2000 MiB/s$`,
+		},
+		{
+			name: "invalid root volume throughput, above maximum",
+			pool: &aws.MachinePool{
+				EC2RootVolume: aws.EC2RootVolume{
+					Type:       "gp3",
+					Size:       100,
+					Throughput: ptr.To(int32(2001)),
+				},
+			},
+			expected: `^test-path\.throughput: Invalid value: 2001: throughput must be between 125 MiB/s and 2000 MiB/s$`,
+		},
+		{
+			name: "invalid root volume throughput, zero",
+			pool: &aws.MachinePool{
+				EC2RootVolume: aws.EC2RootVolume{
+					Type:       "gp3",
+					Size:       100,
+					Throughput: ptr.To(int32(0)),
+				},
+			},
+			expected: `^test-path\.throughput: Invalid value: 0: throughput must be between 125 MiB/s and 2000 MiB/s$`,
+		},
+		{
+			name: "invalid root volume throughput, negative",
+			pool: &aws.MachinePool{
+				EC2RootVolume: aws.EC2RootVolume{
+					Type:       "gp3",
+					Size:       100,
+					Throughput: ptr.To(int32(-100)),
+				},
+			},
+			expected: `^test-path\.throughput: Invalid value: -100: throughput must be between 125 MiB/s and 2000 MiB/s$`,
+		},
+		{
+			name: "invalid root volume throughput, unsupported volume type",
+			pool: &aws.MachinePool{
+				EC2RootVolume: aws.EC2RootVolume{
+					Type:       "gp2",
+					Size:       100,
+					Throughput: ptr.To(int32(125)),
+				},
+			},
+			expected: `^test-path\.throughput: Invalid value: 125: throughput not supported for type gp2$`,
 		},
 	}
 	for _, tc := range cases {
@@ -246,6 +344,60 @@ func Test_validateAMIID(t *testing.T) {
 				assert.NoError(t, err)
 			} else {
 				assert.Regexp(t, test.err, err)
+			}
+		})
+	}
+}
+
+func Test_validateCPUOptions(t *testing.T) {
+	cases := []struct {
+		name string
+		pool *aws.MachinePool
+		err  string
+	}{{
+		name: "confidential compute policy set to AMD SEV-SNP",
+		pool: &aws.MachinePool{
+			CPUOptions: &aws.CPUOptions{
+				ConfidentialCompute: ptr.To(aws.ConfidentialComputePolicySEVSNP),
+			},
+		},
+	}, {
+		name: "confidential compute disabled",
+		pool: &aws.MachinePool{
+			CPUOptions: &aws.CPUOptions{
+				ConfidentialCompute: ptr.To(aws.ConfidentialComputePolicyDisabled),
+			},
+		},
+	}, {
+		name: "empty confidential compute policy",
+		pool: &aws.MachinePool{
+			CPUOptions: &aws.CPUOptions{
+				ConfidentialCompute: ptr.To(aws.ConfidentialComputePolicy("")),
+			},
+		},
+		err: `^test-path.confidentialCompute: Unsupported value: "": supported values: "Disabled", "AMDEncryptedVirtualizationNestedPaging"$`,
+	}, {
+		name: "invalid confidential compute policy",
+		pool: &aws.MachinePool{
+			CPUOptions: &aws.CPUOptions{
+				ConfidentialCompute: ptr.To(aws.ConfidentialComputePolicy("invalid")),
+			},
+		},
+		err: `^test-path.confidentialCompute: Unsupported value: "invalid": supported values: "Disabled", "AMDEncryptedVirtualizationNestedPaging"$`,
+	}, {
+		name: "empty cpu options",
+		pool: &aws.MachinePool{
+			CPUOptions: &aws.CPUOptions{},
+		},
+		err: `^test-path.cpuOptions: Invalid value: "{}": At least one field must be set if cpuOptions is provided$`,
+	}}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateCPUOptions(tc.pool, field.NewPath("test-path")).ToAggregate()
+			if tc.err == "" {
+				assert.NoError(t, err)
+			} else {
+				assert.Regexp(t, tc.err, err)
 			}
 		})
 	}

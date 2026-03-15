@@ -45,6 +45,15 @@ type ModifyRuleInput struct {
 	// The conditions.
 	Conditions []types.RuleCondition
 
+	// Indicates whether to remove all transforms from the rule. If you specify
+	// ResetTransforms , you can't specify Transforms .
+	ResetTransforms *bool
+
+	// The transforms to apply to requests that match this rule. You can add one host
+	// header rewrite transform and one URL rewrite transform. If you specify
+	// Transforms , you can't specify ResetTransforms .
+	Transforms []types.RuleTransform
+
 	noSmithyDocumentSerde
 }
 
@@ -123,6 +132,9 @@ func (c *Client) addOperationModifyRuleMiddlewares(stack *middleware.Stack, opti
 	if err = addUserAgentRetryMode(stack, options); err != nil {
 		return err
 	}
+	if err = addCredentialSource(stack, options); err != nil {
+		return err
+	}
 	if err = addOpModifyRuleValidationMiddleware(stack); err != nil {
 		return err
 	}
@@ -144,16 +156,13 @@ func (c *Client) addOperationModifyRuleMiddlewares(stack *middleware.Stack, opti
 	if err = addDisableHTTPSMiddleware(stack, options); err != nil {
 		return err
 	}
-	if err = addSpanInitializeStart(stack); err != nil {
+	if err = addInterceptBeforeRetryLoop(stack, options); err != nil {
 		return err
 	}
-	if err = addSpanInitializeEnd(stack); err != nil {
+	if err = addInterceptAttempt(stack, options); err != nil {
 		return err
 	}
-	if err = addSpanBuildRequestStart(stack); err != nil {
-		return err
-	}
-	if err = addSpanBuildRequestEnd(stack); err != nil {
+	if err = addInterceptors(stack, options); err != nil {
 		return err
 	}
 	return nil

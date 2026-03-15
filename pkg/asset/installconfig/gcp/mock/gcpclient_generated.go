@@ -91,6 +91,21 @@ func (mr *MockAPIMockRecorder) GetDNSZoneByName(ctx, project, zoneName any) *gom
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDNSZoneByName", reflect.TypeOf((*MockAPI)(nil).GetDNSZoneByName), ctx, project, zoneName)
 }
 
+// GetDNSZoneFromParams mocks base method.
+func (m *MockAPI) GetDNSZoneFromParams(ctx context.Context, params gcp.DNSZoneParams) (*dns.ManagedZone, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetDNSZoneFromParams", ctx, params)
+	ret0, _ := ret[0].(*dns.ManagedZone)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetDNSZoneFromParams indicates an expected call of GetDNSZoneFromParams.
+func (mr *MockAPIMockRecorder) GetDNSZoneFromParams(ctx, params any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDNSZoneFromParams", reflect.TypeOf((*MockAPI)(nil).GetDNSZoneFromParams), ctx, params)
+}
+
 // GetEnabledServices mocks base method.
 func (m *MockAPI) GetEnabledServices(ctx context.Context, project string) ([]string, error) {
 	m.ctrl.T.Helper()
@@ -195,6 +210,21 @@ func (m *MockAPI) GetNetwork(ctx context.Context, network, project string) (*com
 func (mr *MockAPIMockRecorder) GetNetwork(ctx, network, project any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetNetwork", reflect.TypeOf((*MockAPI)(nil).GetNetwork), ctx, network, project)
+}
+
+// GetPrivateServiceConnectEndpoint mocks base method.
+func (m *MockAPI) GetPrivateServiceConnectEndpoint(ctx context.Context, project string, endpoint *gcp.PSCEndpoint) (*compute.ForwardingRule, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetPrivateServiceConnectEndpoint", ctx, project, endpoint)
+	ret0, _ := ret[0].(*compute.ForwardingRule)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetPrivateServiceConnectEndpoint indicates an expected call of GetPrivateServiceConnectEndpoint.
+func (mr *MockAPIMockRecorder) GetPrivateServiceConnectEndpoint(ctx, project, endpoint any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetPrivateServiceConnectEndpoint", reflect.TypeOf((*MockAPI)(nil).GetPrivateServiceConnectEndpoint), ctx, project, endpoint)
 }
 
 // GetProjectByID mocks base method.
@@ -345,6 +375,20 @@ func (m *MockAPI) GetZones(ctx context.Context, project, filter string) ([]*comp
 func (mr *MockAPIMockRecorder) GetZones(ctx, project, filter any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetZones", reflect.TypeOf((*MockAPI)(nil).GetZones), ctx, project, filter)
+}
+
+// UpdateDNSPrivateZoneLabels mocks base method.
+func (m *MockAPI) UpdateDNSPrivateZoneLabels(ctx context.Context, baseDomain, project, zoneName string, labels map[string]string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateDNSPrivateZoneLabels", ctx, baseDomain, project, zoneName, labels)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpdateDNSPrivateZoneLabels indicates an expected call of UpdateDNSPrivateZoneLabels.
+func (mr *MockAPIMockRecorder) UpdateDNSPrivateZoneLabels(ctx, baseDomain, project, zoneName, labels any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateDNSPrivateZoneLabels", reflect.TypeOf((*MockAPI)(nil).UpdateDNSPrivateZoneLabels), ctx, baseDomain, project, zoneName, labels)
 }
 
 // ValidateServiceAccountHasPermissions mocks base method.

@@ -28,13 +28,14 @@ import (
 	ocmConsts "github.com/openshift-online/ocm-common/pkg/ocm/consts"
 	amv1 "github.com/openshift-online/ocm-sdk-go/accountsmgmt/v1"
 	cmv1 "github.com/openshift-online/ocm-sdk-go/clustersmgmt/v1"
-	v1 "github.com/openshift-online/ocm-sdk-go/clustersmgmt/v1"
 	errors "github.com/zgalor/weberr"
 
 	"github.com/openshift/rosa/pkg/aws"
+	"github.com/openshift/rosa/pkg/fedramp"
 	"github.com/openshift/rosa/pkg/helper"
 	"github.com/openshift/rosa/pkg/info"
 	"github.com/openshift/rosa/pkg/interactive/consts"
+	"github.com/openshift/rosa/pkg/logforwarding"
 	"github.com/openshift/rosa/pkg/properties"
 	rprtr "github.com/openshift/rosa/pkg/reporter"
 )
@@ -93,13 +94,16 @@ type Spec struct {
 	AvailabilityZones []string
 
 	// Network config
-	NetworkType string
-	MachineCIDR net.IPNet
-	ServiceCIDR net.IPNet
-	PodCIDR     net.IPNet
-	HostPrefix  int
-	Private     *bool
-	PrivateLink *bool
+	NetworkType                    string
+	SubnetConfiguration            string
+	OvnInternalSubnetConfiguration map[string]string
+	MachineCIDR                    net.IPNet
+	ServiceCIDR                    net.IPNet
+	PodCIDR                        net.IPNet
+	HostPrefix                     int
+	Private                        *bool
+	PrivateLink                    *bool
+	PrivateIngress                 *bool
 
 	// Properties
 	CustomProperties map[string]string
@@ -149,6 +153,10 @@ type Spec struct {
 	// Audit Log Forwarding
 	AuditLogRoleARN *string
 
+	// AutoNode configuration
+	AutoNodeMode    string
+	AutoNodeRoleARN string
+
 	Ec2MetadataHttpTokens cmv1.Ec2MetadataHttpTokens
 
 	// Cluster Admin
@@ -165,6 +173,10 @@ type Spec struct {
 	PrivateHostedZoneID string
 	SharedVPCRoleArn    string
 	BaseDomain          string
+
+	// HCP Shared VPC
+	VpcEndpointRoleArn                string
+	InternalCommunicationHostedZoneId string
 
 	// Worker Machine Pool attributes
 	AdditionalComputeSecurityGroupIds []string
@@ -183,6 +195,14 @@ type Spec struct {
 	PlatformAllowlist          string
 	AdditionalTrustedCaFile    string
 	AdditionalTrustedCa        map[string]string
+
+	// Master/Infra Machine Config
+	MasterMachineType string
+	InfraMachineType  string
+
+	// LogForward
+	S3LogForwarder         *logforwarding.S3LogForwarderConfig
+	CloudWatchLogForwarder *logforwarding.CloudWatchLogForwarderConfig
 }
 
 // Volume represents a volume property for a disk
@@ -245,7 +265,7 @@ func (c *Client) HasClusters(creator *aws.Creator) (bool, error) {
 func (c *Client) CreateCluster(config Spec) (*cmv1.Cluster, error) {
 	spec, err := c.createClusterSpec(config)
 	if err != nil {
-		return nil, fmt.Errorf("Unable to create cluster spec: %v", err)
+		return nil, fmt.Errorf("unable to create cluster spec: %v", err)
 	}
 
 	cluster, err := c.ocm.ClustersMgmt().V1().Clusters().
@@ -367,7 +387,7 @@ func (c *Client) GetCluster(clusterKey string, creator *aws.Creator) (*cmv1.Clus
 	case 1:
 		return response.Items().Slice()[0], nil
 	default:
-		return nil, fmt.Errorf("There are %d clusters with identifier or name '%s'", response.Total(), clusterKey)
+		return nil, fmt.Errorf("there are %d clusters with identifier or name '%s'", response.Total(), clusterKey)
 	}
 }
 
@@ -406,7 +426,7 @@ func (c *Client) GetClusterByID(clusterKey string, creator *aws.Creator) (*cmv1.
 	case 1:
 		return response.Items().Slice()[0], nil
 	default:
-		return nil, fmt.Errorf("There are %d clusters with identifier '%s'", response.Total(), clusterKey)
+		return nil, fmt.Errorf("there are %d clusters with identifier '%s'", response.Total(), clusterKey)
 	}
 }
 
@@ -582,6 +602,13 @@ func (c *Client) UpdateCluster(clusterKey string, creator *aws.Creator, config S
 		clusterBuilder = clusterBuilder.ExpirationTimestamp(config.Expiration)
 	}
 
+	// Update channel group
+	if config.ChannelGroup != "" {
+		clusterBuilder.Version(cmv1.NewVersion().
+			ChannelGroup(config.ChannelGroup),
+		)
+	}
+
 	// Scale cluster
 	clusterNodesBuilder, updateNodes := c.getClusterNodesBuilder(config)
 	if updateNodes {
@@ -615,6 +642,40 @@ func (c *Client) UpdateCluster(clusterKey string, creator *aws.Creator, config S
 		clusterBuilder = clusterBuilder.DisableUserWorkloadMonitoring(*config.DisableWorkloadMonitoring)
 	}
 
+	// SDN -> OVN Migration
+	if config.NetworkType == NetworkTypes[1] {
+		// Create a request body for the specific cluster migration.
+		requestBuilder := cmv1.ClusterMigrationBuilder{}
+		requestBuilder.Type(cmv1.ClusterMigrationTypeSdnToOvn) // Type is required
+
+		if len(config.OvnInternalSubnetConfiguration) > 0 {
+			// Create a builder for the specific migration type's configuration if necessary
+			sdnToOvnBuilder := &cmv1.SdnToOvnClusterMigrationBuilder{}
+			if _, ok := config.OvnInternalSubnetConfiguration[SubnetConfigJoin]; ok {
+				sdnToOvnBuilder.JoinIpv4(config.OvnInternalSubnetConfiguration[SubnetConfigJoin])
+			}
+			if _, ok := config.OvnInternalSubnetConfiguration[SubnetConfigTransit]; ok {
+				sdnToOvnBuilder.TransitIpv4(config.OvnInternalSubnetConfiguration[SubnetConfigTransit])
+			}
+			if _, ok := config.OvnInternalSubnetConfiguration[SubnetConfigMasquerade]; ok {
+				sdnToOvnBuilder.MasqueradeIpv4(config.OvnInternalSubnetConfiguration[SubnetConfigMasquerade])
+			}
+			requestBuilder.SdnToOvn(sdnToOvnBuilder)
+		}
+
+		requestBody, err := requestBuilder.Build()
+		if err != nil {
+			return errors.UserWrapf(err, "Unable to create cluster migration request")
+		}
+
+		// Send the request to add a cluster migration.
+		response, err := c.ocm.ClustersMgmt().V1().Clusters().
+			Cluster(cluster.ID()).Migrations().Add().Body(requestBody).Send()
+		if err != nil {
+			return handleErr(response.Error(), err)
+		}
+	}
+
 	if config.HTTPProxy != nil || config.HTTPSProxy != nil || config.NoProxy != nil {
 		clusterProxyBuilder := cmv1.NewProxy()
 		if config.HTTPProxy != nil {
@@ -646,7 +707,8 @@ func (c *Client) UpdateCluster(clusterKey string, creator *aws.Creator, config S
 		clusterBuilder.RegistryConfig(registryConfigBuilder)
 	}
 
-	if config.AuditLogRoleARN != nil || config.AdditionalAllowedPrincipals != nil || config.BillingAccount != "" {
+	if config.AuditLogRoleARN != nil || config.AdditionalAllowedPrincipals != nil || config.BillingAccount != "" ||
+		config.AutoNodeRoleARN != "" {
 		awsBuilder := cmv1.NewAWS()
 		if config.AdditionalAllowedPrincipals != nil {
 			awsBuilder = awsBuilder.AdditionalAllowedPrincipals(config.AdditionalAllowedPrincipals...)
@@ -659,7 +721,18 @@ func (c *Client) UpdateCluster(clusterKey string, creator *aws.Creator, config S
 		if config.BillingAccount != "" {
 			awsBuilder.BillingAccountID(config.BillingAccount)
 		}
+		// Add AutoNode configuration
+		if config.AutoNodeRoleARN != "" {
+			autoNodeBuilder := cmv1.NewAwsAutoNode().RoleArn(config.AutoNodeRoleARN)
+			awsBuilder = awsBuilder.AutoNode(autoNodeBuilder)
+		}
 		clusterBuilder.AWS(awsBuilder)
+	}
+
+	// Set AutoNode mode if specified
+	if config.AutoNodeMode != "" {
+		autoNodeBuilder := cmv1.NewClusterAutoNode().Mode(config.AutoNodeMode)
+		clusterBuilder.AutoNode(autoNodeBuilder)
 	}
 
 	clusterSpec, err := clusterBuilder.Build()
@@ -758,14 +831,14 @@ func (c *Client) createClusterSpec(config Spec) (*cmv1.Cluster, error) {
 	// Make sure we don't have a custom properties collision
 	if _, present := clusterProperties[ocmConsts.CreatorArn]; present {
 		return nil, fmt.Errorf(
-			"Custom properties key %s collides with a property needed by rosa",
+			"custom properties key %s collides with a property needed by rosa",
 			ocmConsts.CreatorArn,
 		)
 	}
 
 	if _, present := clusterProperties[properties.CLIVersion]; present {
 		return nil, fmt.Errorf(
-			"Custom properties key %s collides with a property needed by rosa",
+			"custom properties key %s collides with a property needed by rosa",
 			properties.CLIVersion,
 		)
 	}
@@ -875,6 +948,12 @@ func (c *Client) createClusterSpec(config Spec) (*cmv1.Cluster, error) {
 		}
 		if len(config.ComputeLabels) > 0 {
 			clusterNodesBuilder = clusterNodesBuilder.ComputeLabels(config.ComputeLabels)
+		}
+		if config.MasterMachineType != "" {
+			clusterNodesBuilder.MasterMachineType(cmv1.NewMachineType().ID(config.MasterMachineType))
+		}
+		if config.InfraMachineType != "" {
+			clusterNodesBuilder.InfraMachineType(cmv1.NewMachineType().ID(config.InfraMachineType))
 		}
 		clusterBuilder = clusterBuilder.Nodes(clusterNodesBuilder)
 	}
@@ -1012,11 +1091,20 @@ func (c *Client) createClusterSpec(config Spec) (*cmv1.Cluster, error) {
 		awsBuilder = awsBuilder.PrivateHostedZoneID(config.PrivateHostedZoneID)
 		awsBuilder = awsBuilder.PrivateHostedZoneRoleARN(config.SharedVPCRoleArn)
 	}
+	// hcp shared vpc
+	if config.VpcEndpointRoleArn != "" {
+		awsBuilder = awsBuilder.PrivateHostedZoneID(config.PrivateHostedZoneID)
+		awsBuilder = awsBuilder.PrivateHostedZoneRoleARN(config.SharedVPCRoleArn)
+		awsBuilder = awsBuilder.VpcEndpointRoleArn(config.VpcEndpointRoleArn)
+		awsBuilder = awsBuilder.HcpInternalCommunicationHostedZoneId(config.InternalCommunicationHostedZoneId)
+	}
 	if config.BaseDomain != "" {
-		clusterBuilder = clusterBuilder.DNS(v1.NewDNS().BaseDomain(config.BaseDomain))
+		clusterBuilder = clusterBuilder.DNS(cmv1.NewDNS().BaseDomain(config.BaseDomain))
 	}
 
 	clusterBuilder = clusterBuilder.AWS(awsBuilder)
+
+	clusterApiListeningMethod := cmv1.ListeningMethodExternal
 
 	if config.Private != nil {
 		if *config.Private {
@@ -1024,6 +1112,7 @@ func (c *Client) createClusterSpec(config Spec) (*cmv1.Cluster, error) {
 				cmv1.NewClusterAPI().
 					Listening(cmv1.ListeningMethodInternal),
 			)
+			clusterApiListeningMethod = cmv1.ListeningMethodInternal
 		} else {
 			clusterBuilder = clusterBuilder.API(
 				cmv1.NewClusterAPI().
@@ -1060,32 +1149,48 @@ func (c *Client) createClusterSpec(config Spec) (*cmv1.Cluster, error) {
 	if config.ClusterAdminUser != "" {
 		hashedPwd, err := idputils.GenerateHTPasswdCompatibleHash(config.ClusterAdminPassword)
 		if err != nil {
-			return nil, fmt.Errorf("Failed to get access keys for user '%s': %v",
+			return nil, fmt.Errorf("failed to get access keys for user '%s': %v",
 				aws.AdminUserName, err)
 		}
-		htpasswdUsers := []*v1.HTPasswdUserBuilder{}
-		htpasswdUsers = append(htpasswdUsers, v1.NewHTPasswdUser().
+		htpasswdUsers := []*cmv1.HTPasswdUserBuilder{}
+		htpasswdUsers = append(htpasswdUsers, cmv1.NewHTPasswdUser().
 			Username(config.ClusterAdminUser).HashedPassword(hashedPwd))
-		htpassUserList := v1.NewHTPasswdUserList().Items(htpasswdUsers...)
-		htPasswdIDP := v1.NewHTPasswdIdentityProvider().Users(htpassUserList)
+		htpassUserList := cmv1.NewHTPasswdUserList().Items(htpasswdUsers...)
+		htPasswdIDP := cmv1.NewHTPasswdIdentityProvider().Users(htpassUserList)
 		clusterBuilder = clusterBuilder.Htpasswd(htPasswdIDP)
 	}
 
-	if !reflect.DeepEqual(config.DefaultIngress, NewDefaultIngressSpec()) {
-		defaultIngress := cmv1.NewIngress().Default(true)
-		if len(config.DefaultIngress.RouteSelectors) != 0 {
-			defaultIngress.RouteSelectors(config.DefaultIngress.RouteSelectors)
+	// Build default ingress if changes detected in config
+	defaultIngress := cmv1.NewIngress().Default(true)
+	if len(config.DefaultIngress.RouteSelectors) != 0 {
+		defaultIngress.RouteSelectors(config.DefaultIngress.RouteSelectors)
+	}
+	if len(config.DefaultIngress.ExcludedNamespaces) != 0 {
+		defaultIngress.ExcludedNamespaces(config.DefaultIngress.ExcludedNamespaces...)
+	}
+	if !helper.Contains([]string{"", consts.SkipSelectionOption}, config.DefaultIngress.WildcardPolicy) {
+		defaultIngress.RouteWildcardPolicy(cmv1.WildcardPolicy(config.DefaultIngress.WildcardPolicy))
+	}
+	if !helper.Contains([]string{"", consts.SkipSelectionOption}, config.DefaultIngress.NamespaceOwnershipPolicy) {
+		defaultIngress.RouteNamespaceOwnershipPolicy(
+			cmv1.NamespaceOwnershipPolicy(config.DefaultIngress.NamespaceOwnershipPolicy))
+	}
+
+	// Decide ingress listening method if HCP and not fedramp enabled
+	isHcpNotFedramp := !fedramp.Enabled() && config.Hypershift.Enabled
+	if isHcpNotFedramp {
+		if config.PrivateIngress != nil {
+			if *config.PrivateIngress {
+				defaultIngress.Listening(cmv1.ListeningMethodInternal)
+			} else {
+				defaultIngress.Listening(cmv1.ListeningMethodExternal)
+			}
+		} else {
+			defaultIngress.Listening(clusterApiListeningMethod)
 		}
-		if len(config.DefaultIngress.ExcludedNamespaces) != 0 {
-			defaultIngress.ExcludedNamespaces(config.DefaultIngress.ExcludedNamespaces...)
-		}
-		if !helper.Contains([]string{"", consts.SkipSelectionOption}, config.DefaultIngress.WildcardPolicy) {
-			defaultIngress.RouteWildcardPolicy(v1.WildcardPolicy(config.DefaultIngress.WildcardPolicy))
-		}
-		if !helper.Contains([]string{"", consts.SkipSelectionOption}, config.DefaultIngress.NamespaceOwnershipPolicy) {
-			defaultIngress.RouteNamespaceOwnershipPolicy(
-				v1.NamespaceOwnershipPolicy(config.DefaultIngress.NamespaceOwnershipPolicy))
-		}
+	}
+
+	if !reflect.DeepEqual(config.DefaultIngress, NewDefaultIngressSpec()) || isHcpNotFedramp {
 		clusterBuilder.Ingresses(cmv1.NewIngressList().Items(defaultIngress))
 	}
 
@@ -1093,9 +1198,34 @@ func (c *Client) createClusterSpec(config Spec) (*cmv1.Cluster, error) {
 		clusterBuilder.Autoscaler(BuildClusterAutoscaler(config.AutoscalerConfig))
 	}
 
+	if config.Hypershift.Enabled {
+		// LogForwarder
+		var logForwarderList []*cmv1.LogForwarderBuilder
+		if config.S3LogForwarder != nil {
+			boundForwarder, err := logforwarding.BindS3LogForwarder(config.S3LogForwarder).Build()
+			if err != nil {
+				return nil, fmt.Errorf("failed to create S3 log forwarder: %v", err)
+			}
+			s3LogFwBuilder := BuildLogForwarder(boundForwarder)
+			logForwarderList = append(logForwarderList, s3LogFwBuilder)
+		}
+		if config.CloudWatchLogForwarder != nil {
+			boundForwarder, err := logforwarding.BindCloudWatchLogForwarder(config.CloudWatchLogForwarder).Build()
+			if err != nil {
+				return nil, fmt.Errorf("failed to create CloudWatch log forwarder: %v", err)
+			}
+			cloudWatchFwBuilder := BuildLogForwarder(boundForwarder)
+			logForwarderList = append(logForwarderList, cloudWatchFwBuilder)
+		}
+		if len(logForwarderList) > 0 {
+			clusterBuilder.ControlPlane(cmv1.NewControlPlane().LogForwarders(
+				cmv1.NewLogForwarderList().Items(logForwarderList...)))
+		}
+	}
+
 	clusterSpec, err := clusterBuilder.Build()
 	if err != nil {
-		return nil, fmt.Errorf("Failed to create description of cluster: %v", err)
+		return nil, fmt.Errorf("failed to create description of cluster: %v", err)
 	}
 
 	return clusterSpec, nil
@@ -1107,11 +1237,11 @@ func (c *Client) HibernateCluster(clusterID string) error {
 		return err
 	}
 	if !enabled {
-		return fmt.Errorf("The '%s' capability is not set for current org", HibernateCapability)
+		return fmt.Errorf("the '%s' capability is not set for current org", HibernateCapability)
 	}
 	_, err = c.ocm.ClustersMgmt().V1().Clusters().Cluster(clusterID).Hibernate().Send()
 	if err != nil {
-		return fmt.Errorf("Failed to hibernate the cluster: %v", err)
+		return fmt.Errorf("failed to hibernate the cluster: %v", err)
 	}
 
 	return nil
@@ -1123,11 +1253,11 @@ func (c *Client) ResumeCluster(clusterID string) error {
 		return err
 	}
 	if !enabled {
-		return fmt.Errorf("The '%s' capability is not set for current org", HibernateCapability)
+		return fmt.Errorf("the '%s' capability is not set for current org", HibernateCapability)
 	}
 	_, err = c.ocm.ClustersMgmt().V1().Clusters().Cluster(clusterID).Resume().Send()
 	if err != nil {
-		return fmt.Errorf("Failed to resume the cluster: %v", err)
+		return fmt.Errorf("failed to resume the cluster: %v", err)
 	}
 
 	return nil
@@ -1154,7 +1284,7 @@ func (c *Client) HasLegacyIngressSupport(cluster *cmv1.Cluster) (bool, error) {
 	labelList, err := c.ocm.ClustersMgmt().V1().Clusters().
 		Cluster(cluster.ID()).ExternalConfiguration().Labels().List().Send()
 	if err != nil {
-		return true, fmt.Errorf("Failed to retrieve external configuration label list: %v", err)
+		return true, fmt.Errorf("failed to retrieve external configuration label list: %v", err)
 	}
 
 	for _, label := range labelList.Items().Slice() {

@@ -46,11 +46,13 @@ var (
 		"c4":  {HyperDiskBalanced},
 		"c4a": {HyperDiskBalanced},
 		"e2":  {PDStandard, PDSSD, PDBalanced},
+		"g2":  {PDStandard, PDSSD, PDBalanced},
 		"m1":  {PDSSD, PDBalanced, HyperDiskBalanced},
 		"n1":  {PDStandard, PDSSD, PDBalanced},
 		"n2":  {PDStandard, PDSSD, PDBalanced},
 		"n2d": {PDStandard, PDSSD, PDBalanced},
 		"n4":  {HyperDiskBalanced},
+		"n4a": {HyperDiskBalanced},
 		"t2a": {PDStandard, PDSSD, PDBalanced},
 		"t2d": {PDStandard, PDSSD, PDBalanced},
 	}

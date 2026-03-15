@@ -12,6 +12,10 @@ import (
 )
 
 // Creates a trust store.
+//
+// For more information, see [Mutual TLS for Application Load Balancers].
+//
+// [Mutual TLS for Application Load Balancers]: https://docs.aws.amazon.com/elasticloadbalancing/latest/application/mutual-authentication.html
 func (c *Client) CreateTrustStore(ctx context.Context, params *CreateTrustStoreInput, optFns ...func(*Options)) (*CreateTrustStoreOutput, error) {
 	if params == nil {
 		params = &CreateTrustStoreInput{}
@@ -131,6 +135,9 @@ func (c *Client) addOperationCreateTrustStoreMiddlewares(stack *middleware.Stack
 	if err = addUserAgentRetryMode(stack, options); err != nil {
 		return err
 	}
+	if err = addCredentialSource(stack, options); err != nil {
+		return err
+	}
 	if err = addOpCreateTrustStoreValidationMiddleware(stack); err != nil {
 		return err
 	}
@@ -152,16 +159,13 @@ func (c *Client) addOperationCreateTrustStoreMiddlewares(stack *middleware.Stack
 	if err = addDisableHTTPSMiddleware(stack, options); err != nil {
 		return err
 	}
-	if err = addSpanInitializeStart(stack); err != nil {
+	if err = addInterceptBeforeRetryLoop(stack, options); err != nil {
 		return err
 	}
-	if err = addSpanInitializeEnd(stack); err != nil {
+	if err = addInterceptAttempt(stack, options); err != nil {
 		return err
 	}
-	if err = addSpanBuildRequestStart(stack); err != nil {
-		return err
-	}
-	if err = addSpanBuildRequestEnd(stack); err != nil {
+	if err = addInterceptors(stack, options); err != nil {
 		return err
 	}
 	return nil

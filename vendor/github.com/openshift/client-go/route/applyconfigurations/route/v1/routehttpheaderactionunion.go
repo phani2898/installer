@@ -3,14 +3,22 @@
 package v1
 
 import (
-	v1 "github.com/openshift/api/route/v1"
+	routev1 "github.com/openshift/api/route/v1"
 )
 
 // RouteHTTPHeaderActionUnionApplyConfiguration represents a declarative configuration of the RouteHTTPHeaderActionUnion type for use
 // with apply.
+//
+// RouteHTTPHeaderActionUnion specifies an action to take on an HTTP header.
 type RouteHTTPHeaderActionUnionApplyConfiguration struct {
-	Type *v1.RouteHTTPHeaderActionType         `json:"type,omitempty"`
-	Set  *RouteSetHTTPHeaderApplyConfiguration `json:"set,omitempty"`
+	// type defines the type of the action to be applied on the header.
+	// Possible values are Set or Delete.
+	// Set allows you to set HTTP request and response headers.
+	// Delete allows you to delete HTTP request and response headers.
+	Type *routev1.RouteHTTPHeaderActionType `json:"type,omitempty"`
+	// set defines the HTTP header that should be set: added if it doesn't exist or replaced if it does.
+	// This field is required when type is Set and forbidden otherwise.
+	Set *RouteSetHTTPHeaderApplyConfiguration `json:"set,omitempty"`
 }
 
 // RouteHTTPHeaderActionUnionApplyConfiguration constructs a declarative configuration of the RouteHTTPHeaderActionUnion type for use with
@@ -22,7 +30,7 @@ func RouteHTTPHeaderActionUnion() *RouteHTTPHeaderActionUnionApplyConfiguration 
 // WithType sets the Type field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the Type field is set to the value of the last call.
-func (b *RouteHTTPHeaderActionUnionApplyConfiguration) WithType(value v1.RouteHTTPHeaderActionType) *RouteHTTPHeaderActionUnionApplyConfiguration {
+func (b *RouteHTTPHeaderActionUnionApplyConfiguration) WithType(value routev1.RouteHTTPHeaderActionType) *RouteHTTPHeaderActionUnionApplyConfiguration {
 	b.Type = &value
 	return b
 }

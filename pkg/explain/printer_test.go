@@ -81,13 +81,15 @@ There are three possible values for this field, but the valid values are depende
 "Passthrough": copy the credentials with all of the overall permissions for each CredentialsRequest
 "Manual": CredentialsRequests must be handled manually by the user
 
-For each of the following platforms, the field can set to the specified values. For all other platforms, the
+For each of the following platforms, the field can be set to the specified values. For all other platforms, the
 field must not be set.
 AWS: "Mint", "Passthrough", "Manual"
 Azure: "Passthrough", "Manual"
 AzureStack: "Manual"
 GCP: "Mint", "Passthrough", "Manual"
 IBMCloud: "Manual"
+OpenStack: "Passthrough"
+PowerVC: "Passthrough"
 PowerVS: "Manual"
 Nutanix: "Manual"
 
@@ -133,6 +135,10 @@ the cluster.
     operatorPublishingStrategy <object>
       OperatorPublishingStrategy controls the visibility of ingress and apiserver. Defaults to public.
 
+    osImageStream <string>
+      Valid Values: "rhel-9","rhel-10"
+      OSImageStream is the global OS Image Stream to be used for all machines in the cluster.
+
     platform <object> -required-
       Platform is the configuration for the specific platform upon which to
 perform the installation.
@@ -143,8 +149,9 @@ If unset, the cluster will not be configured to use a proxy.
 
     publish <string>
       Default: "External"
-      Valid Values: "","External","Internal"
+      Valid Values: "","External","Internal","Mixed"
       Publish controls how the user facing endpoints of the cluster like the Kubernetes API, OpenShift routes etc. are exposed.
+A "Mixed" strategy only applies to the "azure" platform, and requires "operatorPublishingStrategy" to be configured.
 When no strategy is specified, the strategy is "External".
 
     pullSecret <string> -required-
@@ -190,6 +197,9 @@ platform.
     ovirt <object>
       Ovirt is the configuration used when installing on oVirt.
 
+    powervc <object>
+      PowerVC is the configuration used when installing on Power VC.
+
     powervs <object>
       PowerVS is the configuration used when installing on Power VS.
 
@@ -228,7 +238,17 @@ in a shared VPC scenario when the private hosted zone belongs to a
 different account than the rest of the cluster resources.
 If HostedZoneRole is set, HostedZone must also be set.
 
+    ipFamily <string>
+      Default: "IPv4"
+      Valid Values: "IPv4","DualStackIPv4Primary","DualStackIPv6Primary"
+      IPFamily specifies the IP address family for the cluster network.
+Use "IPv4" for IPv4-only networking, "DualStackIPv4Primary" for dual-stack networking
+with IPv4 as the primary address family, or "DualStackIPv6Primary" for dual-stack
+networking with IPv6 as the primary address family. When using dual-stack, the VPC
+and subnets must be configured with both IPv4 and IPv6 CIDR blocks.
+
     lbType <string>
+      Valid Values: "Classic","NLB"
       LBType is an optional field to specify a load balancer type.
 When this field is specified, all ingresscontrollers (including the
 default ingresscontroller) will be created using the specified load-balancer
@@ -245,8 +265,10 @@ https://docs.aws.amazon.com/AmazonECS/latest/developerguide/load-balancer-types.
 transport layer (TCP/SSL). See the following for additional details:
 https://docs.aws.amazon.com/AmazonECS/latest/developerguide/load-balancer-types.html#nlb
 
-If this field is not set explicitly, it defaults to "Classic".  This
-default is subject to change over time.
+If this field is not set explicitly, the default value depends on the ipFamily field:
+* "Classic" when ipFamily is not set or set to "IPv4"
+* "NLB" when ipFamily is set to "DualStackIPv4Primary" or "DualStackIPv6Primary"
+This default is subject to change over time.
 
     preserveBootstrapIgnition <boolean>
       PreserveBootstrapIgnition is deprecated. Use bestEffortDeleteIgnition instead.
@@ -311,8 +333,12 @@ If empty, the value is equal to "AzurePublicCloud".
     computeSubnet <string>
       ComputeSubnet specifies an existing subnet for use by compute nodes
 
+Deprecated: use platform.Azure.Subnets section
+
     controlPlaneSubnet <string>
       ControlPlaneSubnet specifies an existing subnet for use by the control plane nodes
+
+Deprecated: use platform.Azure.Subnets section
 
     customerManagedKey <object>
       CustomerManagedKey has the keys needed to encrypt the storage account.
@@ -322,12 +348,21 @@ If empty, the value is equal to "AzurePublicCloud".
 installing on Azure for machine pools which do not define their own
 platform configuration.
 
+    ipFamily <string>
+      Default: "IPv4"
+      Valid Values: "IPv4","DualStackIPv4Primary","DualStackIPv6Primary"
+      IPFamily specifies the IP address family for the cluster network.
+Use "IPv4" for IPv4-only networking, "DualStackIPv4Primary" for dual-stack networking
+with IPv4 as the primary address family, or "DualStackIPv6Primary" for dual-stack
+networking with IPv6 as the primary address family. When using dual-stack, the VNet
+and subnets must be configured with both IPv4 and IPv6 CIDR blocks.
+
     networkResourceGroupName <string>
       NetworkResourceGroupName specifies the network resource group that contains an existing VNet
 
     outboundType <string>
       Default: "Loadbalancer"
-      Valid Values: "","Loadbalancer","NATGatewaySingleZone","UserDefinedRouting"
+      Valid Values: "","Loadbalancer","NATGatewaySingleZone","NATGatewayMultiZone","UserDefinedRouting"
       OutboundType is a strategy for how egress from cluster is achieved. When not specified default is "Loadbalancer".
 
     region <string> -required-
@@ -340,6 +375,10 @@ ownership of all resources in the resource group. Destroying the cluster using i
 resource group.
 This resource group must be empty with no other resources when trying to use it for creating a cluster.
 If empty, a new resource group will created for the cluster.
+
+    subnets <[]object>
+      Subnets is the list of subnets the user can bring into the cluster to be used.
+      SubnetSpec specifies the properties the subnet needs to be used in the cluster.
 
     userProvisionedDNS <string>
       Default: "Disabled"
@@ -414,8 +453,9 @@ VERSION:  v1
 
 RESOURCE: <string>
   Default: "External"
-  Valid Values: "","External","Internal"
+  Valid Values: "","External","Internal","Mixed"
   Publish controls how the user facing endpoints of the cluster like the Kubernetes API, OpenShift routes etc. are exposed.
+A "Mixed" strategy only applies to the "azure" platform, and requires "operatorPublishingStrategy" to be configured.
 When no strategy is specified, the strategy is "External".
 		`,
 	}, {

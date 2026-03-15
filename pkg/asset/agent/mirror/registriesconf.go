@@ -12,6 +12,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 
+	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/installer/pkg/asset"
 	"github.com/openshift/installer/pkg/asset/agent"
 	"github.com/openshift/installer/pkg/asset/agent/joiner"
@@ -111,13 +112,7 @@ unqualified-search-registries = []
 type RegistriesConf struct {
 	File         *asset.File
 	Config       *sysregistriesv2.V2RegistriesConf
-	MirrorConfig []RegistriesConfig
-}
-
-// RegistriesConfig holds the data extracted from registries.conf
-type RegistriesConfig struct {
-	Location string
-	Mirrors  []string
+	MirrorConfig types.MirrorConfig
 }
 
 var _ asset.WritableAsset = (*RegistriesConf)(nil)
@@ -162,10 +157,6 @@ func (i *RegistriesConf) Generate(_ context.Context, dependencies asset.Parents)
 		imageDigestSources = clusterInfo.ImageDigestSources
 		deprecatedImageContentSources = clusterInfo.DeprecatedImageContentSources
 		image = clusterInfo.ReleaseImage
-
-	case workflow.AgentWorkflowTypeInstallInteractiveDisconnected:
-		// Not required
-		return nil
 
 	default:
 		return fmt.Errorf("AgentWorkflowType value not supported: %s", agentWorkflow.Workflow)
@@ -220,6 +211,7 @@ func (i *RegistriesConf) generateRegistriesConf(imageDigestSources []types.Image
 		registry := sysregistriesv2.Registry{}
 		registry.Endpoint.Location = group.Source
 		registry.MirrorByDigestOnly = true
+		registry.Blocked = group.SourcePolicy == configv1.NeverContactSource
 		for _, mirror := range group.Mirrors {
 			registry.Mirrors = append(registry.Mirrors, sysregistriesv2.Endpoint{Location: mirror})
 		}
@@ -303,9 +295,9 @@ func (i *RegistriesConf) generateDefaultRegistriesConf() error {
 }
 
 func (i *RegistriesConf) setMirrorConfig(registriesConf *sysregistriesv2.V2RegistriesConf) {
-	mirrorConfig := make([]RegistriesConfig, len(registriesConf.Registries))
+	mirrorConfig := make(types.MirrorConfig, len(registriesConf.Registries))
 	for i, reg := range registriesConf.Registries {
-		mirrorConfig[i] = RegistriesConfig{
+		mirrorConfig[i] = types.Mirror{
 			Location: reg.Location,
 		}
 		for _, mirror := range reg.Mirrors {

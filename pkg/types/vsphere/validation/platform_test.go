@@ -461,6 +461,19 @@ func TestValidatePlatform(t *testing.T) {
 			expectedError: `^test-path\.failureDomains\.server: Invalid value: "bad-vcenter": server does not exist in vcenters`,
 		},
 		{
+			name: "Multi-zone platform datacenter not in vCenter datacenters list",
+			platform: func() *vsphere.Platform {
+				p := validPlatform()
+				p.FailureDomains[0].Topology.Datacenter = "non-existent-datacenter"
+				p.FailureDomains[0].Topology.Datastore = "/non-existent-datacenter/datastore/test-datastore"
+				p.FailureDomains[0].Topology.ComputeCluster = "/non-existent-datacenter/host/test-cluster"
+				p.FailureDomains[0].Topology.ResourcePool = "/non-existent-datacenter/host/test-cluster/Resources/test-resourcepool"
+				p.FailureDomains[0].Topology.Folder = "/non-existent-datacenter/vm/test-folder"
+				return p
+			}(),
+			expectedError: `^test-path\.failureDomains\.topology\.datacenter: Invalid value: "non-existent-datacenter": datacenter must be defined in vCenter test-vcenter datacenters list$`,
+		},
+		{
 			name: "Multi-zone platform failure domain topology cluster relative path",
 			platform: func() *vsphere.Platform {
 				p := validPlatform()
@@ -951,6 +964,32 @@ func TestValidatePlatform(t *testing.T) {
 				return p
 			}(),
 			expectedError: `test-path.failureDomains.topology.networks: Required value: must specify a network`,
+		},
+		{
+			name: "Valid - template without clusterOSImage",
+			platform: func() *vsphere.Platform {
+				p := validPlatform()
+				p.FailureDomains[0].Topology.Template = "/test-datacenter/vm/test-template"
+				return p
+			}(),
+		},
+		{
+			name: "Valid - clusterOSImage without template",
+			platform: func() *vsphere.Platform {
+				p := validPlatform()
+				p.ClusterOSImage = "http://example.com/rhcos.ova"
+				return p
+			}(),
+		},
+		{
+			name: "Invalid - both template and clusterOSImage",
+			platform: func() *vsphere.Platform {
+				p := validPlatform()
+				p.FailureDomains[0].Topology.Template = "/test-datacenter/vm/test-template"
+				p.ClusterOSImage = "http://example.com/rhcos.ova"
+				return p
+			}(),
+			expectedError: `test-path.failureDomains.topology.template: Invalid value: "/test-datacenter/vm/test-template": cannot be specified when clusterOSImage is set, test-path.clusterOSImage: Invalid value: "http://example.com/rhcos.ova": cannot be specified when failuredomain.topology.template is set`,
 		},
 	}
 	for _, tc := range cases {
